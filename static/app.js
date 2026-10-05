@@ -53,7 +53,7 @@ function renderLogin() {
   document.getElementById("app").innerHTML = `
     <section class="auth">
       <div class="hero">
-        <div class="brand"><img class="logo" src="/static/logo.png" alt="Trackzy" /><div><strong>Trackzy</strong><div class="muted">Sourceeasy logistics</div></div></div>
+        <div class="brand"><img class="logo" src="/static/logo.png" alt="Trackzy" /><div><strong>Trackzy</strong></div></div>
         <div>
           <h1>Move cargo from quote to delivery.</h1>
           <p>Customers raise an RFQ. Ops quotes it. Acceptance creates a shipment and a tracking number.</p>
