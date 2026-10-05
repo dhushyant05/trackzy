@@ -22,13 +22,22 @@ function toast(msg) { alert(msg); }
 
 function loadChatwoot() {
   fetch("/api/chat/config").then(r => r.json()).then(cfg => {
-    if (!cfg.enabled || window.chatwootSDK) return;
-    window.chatwootSettings = { position: "right", type: "expanded_bubble", launcherTitle: "Chat with support" };
+    if (cfg.provider !== "tawk" || !cfg.property_id) return;
+    window.Tawk_API = window.Tawk_API || {};
+    window.Tawk_LoadStart = new Date();
     const s = document.createElement("script");
-    s.src = cfg.base_url.replace(/\/$/, "") + "/packs/js/sdk.js";
     s.async = true;
-    s.onload = () => window.chatwootSDK.run({ websiteToken: cfg.website_token, baseUrl: cfg.base_url });
+    s.src = `https://embed.tawk.to/${cfg.property_id}/${cfg.widget_id || "default"}`;
+    s.charset = "UTF-8";
+    s.setAttribute("crossorigin", "*");
     document.body.appendChild(s);
+    const hide = () => {
+      const btn = document.getElementById("chatbtn");
+      const pop = document.getElementById("chatpop");
+      if (btn) btn.style.display = "none";
+      if (pop) pop.style.display = "none";
+    };
+    setTimeout(hide, 600);
   }).catch(() => {});
 }
 

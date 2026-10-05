@@ -16,8 +16,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://trackzy:${POSTGRES_PASSWORD:-trackzy}@db:5432/trackzy
       PUBLIC_BASE_URL: https://trackzy.in
-      CHATWOOT_BASE_URL: ${CHATWOOT_BASE_URL:-https://support.trackzy.in}
-      CHATWOOT_WEBSITE_TOKEN: ${CHATWOOT_WEBSITE_TOKEN:-}
+      TAWK_PROPERTY_ID: ${TAWK_PROPERTY_ID:-}
+      TAWK_WIDGET_ID: ${TAWK_WIDGET_ID:-default}
     ports:
       - "8000:8000"
     restart: unless-stopped

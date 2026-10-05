@@ -281,9 +281,14 @@ def me(user: User = Depends(require_user)):
 
 @app.get("/api/chat/config")
 def chat_config():
-    base = os.environ.get("CHATWOOT_BASE_URL", "")
-    token = os.environ.get("CHATWOOT_WEBSITE_TOKEN", "")
-    return {"enabled": bool(base and token), "base_url": base, "website_token": token}
+    property_id = os.environ.get("TAWK_PROPERTY_ID", "")
+    widget_id = os.environ.get("TAWK_WIDGET_ID", "default")
+    return {
+        "provider": "tawk" if property_id else "trackzy",
+        "enabled": bool(property_id),
+        "property_id": property_id,
+        "widget_id": widget_id,
+    }
 
 
 @app.get("/api/meta")
