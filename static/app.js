@@ -68,6 +68,7 @@ function renderLogin() {
       <label>Email</label><input id="email" value="customer@trackzy.test" />
       <label>Password</label><input id="password" type="password" value="customer123" />
       <p><button class="primary" id="go">Enter</button></p>
+      <p><button id="reg">Request an account</button></p>
       <p class="muted">customer@trackzy.test / customer123<br>ops@trackzy.test / ops123<br>support@trackzy.test / support123<br>manager@trackzy.test / manager123<br>admin@trackzy.test / admin123</p>
       <p class="muted">Public sample: <a href="/?track=trk_8f3a21">trk_8f3a21</a></p>
     </div>`;
@@ -79,6 +80,32 @@ function renderLogin() {
       state.user = out.user;
       state.view = out.user.role === "customer" ? "rfqs" : "shipments";
       await renderApp();
+    } catch (e) { alert(e.message); }
+  };
+  document.getElementById("reg").onclick = renderRegister;
+}
+
+function renderRegister() {
+  document.getElementById("app").innerHTML = `
+    <div class="login">
+      <div class="brand"><div class="mark">T</div><div><strong>Trackzy</strong><small>Account request</small></div></div>
+      <h2>Request a login</h2>
+      <p class="muted">Ops reviews this before the account is created. You cannot sign in until they approve it.</p>
+      <label>Name</label><input id="name" />
+      <label>Login name</label><input id="login_name" placeholder="acme.priya" />
+      <label>Email address</label><input id="email" />
+      <label>Phone number</label><input id="phone" />
+      <label>Address</label><textarea id="address"></textarea>
+      <p><button class="primary" id="sendreg">Send to ops</button> <button id="back">Back</button></p>
+    </div>`;
+  document.getElementById("back").onclick = renderLogin;
+  document.getElementById("sendreg").onclick = async () => {
+    try {
+      await api("/api/registrations", { method: "POST", body: {
+        name: name.value, login_name: login_name.value, email: email.value, phone: phone.value, address: address.value,
+      }});
+      alert("Sent to ops. You can sign in after they verify and create the account.");
+      renderLogin();
     } catch (e) { alert(e.message); }
   };
 }
@@ -105,7 +132,7 @@ function shell(body) {
     ["shipments", "Shipments"],
     ["support", "Support chat"],
   ];
-  if (role !== "customer") links.push(["direct", "Direct shipment"]);
+  if (role !== "customer") links.push(["direct", "Direct shipment"], ["signups", "Account requests"]);
   if (role === "admin" || role === "manager_ops") links.unshift(["tower", "Master"]);
   return `
     <header class="top">
@@ -128,11 +155,12 @@ async function renderApp() {
   if (state.view === "rfqs") body = await rfqs();
   if (state.view === "shipments") body = await shipments();
   if (state.view === "direct") body = directForm();
+  if (state.view === "signups") body = await signups();
   if (state.view === "support") body = await supportPage();
   document.getElementById("app").innerHTML = shell(body);
   document.getElementById("out").onclick = () => { localStorage.removeItem("trackzyToken"); location.reload(); };
   document.querySelectorAll("[data-view]").forEach(b => b.onclick = async () => { state.view = b.dataset.view; await renderApp(); });
-  document.getElementById("chatbtn").onclick = toggleChat;
+  document.getElementById("chatbtn").onclick = () => { state.view = "support"; renderApp(); };
   bind();
   if (state.view === "chat") fillChat(document.getElementById("fullchat"));
 }
@@ -205,6 +233,19 @@ async function shipments() {
     </article>`).join("")}</div>`;
 }
 
+async function signups() {
+  const rows = await api("/api/registrations");
+  return `<h2>Account requests</h2>
+    <p class="muted">A request does not create a login. Approve it here after you verify the details.</p>
+    <div class="list">${rows.map(r => `
+      <article class="panel">
+        <strong>${r.name}</strong> <span class="tag">${r.status}</span>
+        <div class="muted">${r.login_name} · ${r.email} · ${r.phone}</div>
+        <p>${r.address}</p>
+        ${r.status === "pending" ? `<div class="row"><input data-pass="${r.id}" value="customer123" /><input data-co="${r.id}" placeholder="Company name" /><button class="primary" data-approve="${r.id}">Create account</button><button data-reject="${r.id}">Reject</button></div>` : `<p class="muted">${r.note || ""}</p>`}
+      </article>`).join("") || `<p class="muted">No requests yet.</p>`}</div>`;
+}
+
 function directForm() {
   return `<h2>Direct shipment</h2><form id="direct" class="panel">
     <label>Existing customer id (blank to create)</label><input name="customer_id" placeholder="1" />
@@ -238,12 +279,17 @@ function bind() {
     await renderApp();
   };
   document.querySelectorAll("[data-cust]").forEach(b => b.onclick = async () => { state.chatCustomer = Number(b.dataset.cust); await renderApp(); });
-  const desk = document.getElementById("deskform");
-  if (desk) desk.onsubmit = async (e) => {
-    e.preventDefault();
-    await api("/api/messages", { method: "POST", body: { body: document.getElementById("deskmsg").value, customer_id: state.chatCustomer, channel: "support" } });
+  document.querySelectorAll("[data-approve]").forEach(b => b.onclick = async () => {
+    const password = document.querySelector(`[data-pass="${b.dataset.approve}"]`).value;
+    const company = document.querySelector(`[data-co="${b.dataset.approve}"]`).value;
+    const out = await api(`/api/registrations/${b.dataset.approve}/approve`, { method: "POST", body: { password, company } });
+    alert(`Account created. Login ${out.login_name} / ${out.password}`);
     await renderApp();
-  };
+  });
+  document.querySelectorAll("[data-reject]").forEach(b => b.onclick = async () => {
+    await api(`/api/registrations/${b.dataset.reject}/reject`, { method: "POST", body: { note: "Rejected" } });
+    await renderApp();
+  });
 }
 
 function showRfq(id) {

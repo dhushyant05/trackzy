@@ -27,6 +27,7 @@ from .models import (
     Shipment,
     ShipmentProduct,
     ShipmentSupplier,
+    SignupRequest,
     StatusEvent,
     User,
 )
@@ -40,6 +41,12 @@ if engine.dialect.name == "sqlite":
         cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(messages)").fetchall()]
         if cols and "channel" not in cols:
             conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN channel VARCHAR(20) DEFAULT 'support'")
+        user_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()]
+        if user_cols and "login_name" not in user_cols:
+            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN login_name VARCHAR(80)")
+        cust_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(customers)").fetchall()]
+        if cust_cols and "address" not in cust_cols:
+            conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN address TEXT DEFAULT ''")
 with next(get_db()) as _db:
     seed(_db)
 
@@ -68,6 +75,20 @@ def require_user(authorization: str | None = Header(default=None), db: Session =
 class LoginIn(BaseModel):
     email: str
     password: str
+
+
+class SignupIn(BaseModel):
+    name: str
+    login_name: str
+    email: str
+    phone: str
+    address: str
+
+
+class ReviewIn(BaseModel):
+    password: str = "customer123"
+    company: str = ""
+    note: str = ""
 
 
 class ProductIn(BaseModel):
@@ -212,10 +233,11 @@ def shipment_dict(s: Shipment, private: bool) -> dict:
 
 @app.post("/api/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == body.email).first()
+    key = body.email.strip().lower()
+    user = db.query(User).filter((User.email == key) | (User.login_name == key)).first()
     if not user or not check_password(body.password, user.password_hash):
         raise HTTPException(401, "Email or password is wrong")
-    return {"token": f"user:{user.id}", "user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role.value, "customer_id": user.customer_id}}
+    return {"token": f"user:{user.id}", "user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role.value, "customer_id": user.customer_id, "login_name": user.login_name}}
 
 
 @app.get("/api/me")
@@ -239,6 +261,62 @@ def meta():
         "doc_statuses": [x.value for x in DocStatus],
         "service_types": ["Door-to-Door", "Warehouse-to-Warehouse", "Port-to-Port", "Warehouse at Destination"],
     }
+
+
+@app.post("/api/registrations")
+def register(body: SignupIn, db: Session = Depends(get_db)):
+    login_name = body.login_name.strip().lower()
+    email = body.email.strip().lower()
+    if not all([body.name.strip(), login_name, email, body.phone.strip(), body.address.strip()]):
+        raise HTTPException(400, "Name, login name, email, phone, and address are required")
+    if db.query(User).filter((User.email == email) | (User.login_name == login_name)).first():
+        raise HTTPException(400, "That login name or email is already in use")
+    if db.query(SignupRequest).filter(SignupRequest.status == "pending", (SignupRequest.email == email) | (SignupRequest.login_name == login_name)).first():
+        raise HTTPException(400, "A request for this login is already waiting for ops")
+    row = SignupRequest(name=body.name.strip(), login_name=login_name, email=email, phone=body.phone.strip(), address=body.address.strip())
+    db.add(row)
+    db.commit()
+    return {"id": row.id, "status": "pending"}
+
+
+@app.get("/api/registrations")
+def list_registrations(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role == Role.customer:
+        raise HTTPException(403, "Ops only")
+    return [{
+        "id": r.id, "name": r.name, "login_name": r.login_name, "email": r.email,
+        "phone": r.phone, "address": r.address, "status": r.status, "note": r.note,
+    } for r in db.query(SignupRequest).order_by(SignupRequest.id.desc()).all()]
+
+
+@app.post("/api/registrations/{request_id}/approve")
+def approve_registration(request_id: int, body: ReviewIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role == Role.customer:
+        raise HTTPException(403, "Ops only")
+    row = db.get(SignupRequest, request_id)
+    if not row or row.status != "pending":
+        raise HTTPException(404, "Pending request not found")
+    customer = Customer(company=body.company.strip() or row.name, contact_name=row.name, email=row.email, phone=row.phone, address=row.address)
+    db.add(customer)
+    db.flush()
+    db.add(User(name=row.name, email=row.email, login_name=row.login_name, password_hash=hash_password(body.password or "customer123"), role=Role.customer, customer_id=customer.id))
+    row.status = "approved"
+    row.note = body.note or f"Approved by {user.name}"
+    db.commit()
+    return {"ok": True, "login_name": row.login_name, "password": body.password or "customer123"}
+
+
+@app.post("/api/registrations/{request_id}/reject")
+def reject_registration(request_id: int, body: ReviewIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role == Role.customer:
+        raise HTTPException(403, "Ops only")
+    row = db.get(SignupRequest, request_id)
+    if not row or row.status != "pending":
+        raise HTTPException(404, "Pending request not found")
+    row.status = "rejected"
+    row.note = body.note or f"Rejected by {user.name}"
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/customers")

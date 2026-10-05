@@ -84,6 +84,7 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(120))
     email: Mapped[str] = mapped_column(String(180), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(200))
+    login_name: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
     role: Mapped[Role] = mapped_column(Enum(Role))
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -99,12 +100,27 @@ class Customer(Base):
     contact_name: Mapped[str] = mapped_column(String(120))
     email: Mapped[str] = mapped_column(String(180))
     phone: Mapped[str] = mapped_column(String(40), default="")
+    address: Mapped[str] = mapped_column(Text, default="")
     country: Mapped[str] = mapped_column(String(80), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     users: Mapped[list[User]] = relationship(back_populates="customer")
     rfqs: Mapped[list["RFQ"]] = relationship(back_populates="customer")
     shipments: Mapped[list["Shipment"]] = relationship(back_populates="customer")
+
+
+class SignupRequest(Base):
+    __tablename__ = "signup_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    login_name: Mapped[str] = mapped_column(String(80), index=True)
+    email: Mapped[str] = mapped_column(String(180), index=True)
+    phone: Mapped[str] = mapped_column(String(40), default="")
+    address: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class RFQ(Base):
