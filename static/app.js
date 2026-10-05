@@ -236,6 +236,8 @@ async function showCustomer(id) {
     await showCustomer(id);
   };
 }
+
+async function signups() {
   const rows = await api("/api/registrations");
   return `<h2>Account requests</h2><div class="list">${rows.map(r => `<article class="card" style="padding:16px;margin-bottom:12px"><strong>${r.name}</strong> <span class="tag">${r.status}</span><div class="muted">${r.login_name} · ${r.email} · ${r.phone}</div><p>${r.address}</p>${r.status === "pending" ? `<div class="row"><input data-pass="${r.id}" value="customer123" /><input data-co="${r.id}" placeholder="Company" /><button class="primary" data-approve="${r.id}">Create account</button><button class="ghost" data-reject="${r.id}">Reject</button></div>` : `<p class="muted">${r.note || ""}</p>`}</article>`).join("") || `<p class="muted">No requests.</p>`}</div>`;
 }
