@@ -159,6 +159,7 @@ class RFQ(Base):
     customer: Mapped[Customer] = relationship(back_populates="rfqs")
     suppliers: Mapped[list["RFQSupplier"]] = relationship(back_populates="rfq", cascade="all, delete-orphan")
     quotes: Mapped[list["Quote"]] = relationship(back_populates="rfq")
+    documents: Mapped[list["Document"]] = relationship(back_populates="rfq", cascade="all, delete-orphan")
 
 
 class RFQSupplier(Base):
@@ -291,13 +292,16 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    shipment_id: Mapped[int] = mapped_column(ForeignKey("shipments.id"))
+    shipment_id: Mapped[int | None] = mapped_column(ForeignKey("shipments.id"), nullable=True)
+    rfq_id: Mapped[int | None] = mapped_column(ForeignKey("rfqs.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(160))
     kind: Mapped[str] = mapped_column(String(60), default="other")
     status: Mapped[DocStatus] = mapped_column(Enum(DocStatus), default=DocStatus.required)
     note: Mapped[str] = mapped_column(Text, default="")
+    file_name: Mapped[str] = mapped_column(String(255), default="")
 
-    shipment: Mapped[Shipment] = relationship(back_populates="documents")
+    shipment: Mapped[Shipment | None] = relationship(back_populates="documents")
+    rfq: Mapped[RFQ | None] = relationship(back_populates="documents")
 
 
 class Message(Base):

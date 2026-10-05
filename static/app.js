@@ -135,6 +135,12 @@ function shell(body) {
     <main class="main">
       <div class="topbar"><div><strong>${state.user.name}</strong><div class="muted">${state.user.email}</div></div><button class="ghost" id="out">Sign out</button></div>
       ${body}
+      <button class="primary" id="chatbtn" style="position:fixed;right:22px;bottom:22px;z-index:20;border-radius:999px;padding:12px 16px">Chat</button>
+      <section id="chatpop" class="card" style="display:none;position:fixed;right:22px;bottom:76px;width:340px;z-index:20;padding:12px">
+        <div class="row" style="justify-content:space-between"><strong>Support</strong><button class="ghost" id="chatclose">Close</button></div>
+        <div id="poplog" style="height:240px;overflow:auto;margin:8px 0"></div>
+        <form id="popform" class="row"><input id="popmsg" placeholder="Message support" /><button class="primary">Send</button></form>
+      </section>
     </main>
   </div>`;
 }
@@ -340,6 +346,31 @@ function bind() {
     await api(`/api/registrations/${b.dataset.reject}/reject`, { method: "POST", body: { note: "Rejected" } });
     await renderApp();
   });
+  const chatbtn = document.getElementById("chatbtn");
+  const chatpop = document.getElementById("chatpop");
+  if (chatbtn) chatbtn.onclick = async () => {
+    chatpop.style.display = chatpop.style.display === "none" ? "block" : "none";
+    if (chatpop.style.display === "block") await fillPopup();
+  };
+  const close = document.getElementById("chatclose");
+  if (close) close.onclick = () => { chatpop.style.display = "none"; };
+  const pop = document.getElementById("popform");
+  if (pop) pop.onsubmit = async (e) => {
+    e.preventDefault();
+    const text = document.getElementById("popmsg").value.trim();
+    if (!text) return;
+    await api("/api/messages", { method: "POST", body: { body: text, customer_id: state.chatCustomer || state.user.customer_id } });
+    document.getElementById("popmsg").value = "";
+    await fillPopup();
+  };
+}
+
+async function fillPopup() {
+  const data = await api("/api/messages");
+  const id = state.user.role === "customer" ? state.user.customer_id : (state.chatCustomer || data.customers[0]?.id);
+  state.chatCustomer = id;
+  const rows = (data.messages || []).filter(m => m.customer_id === id);
+  document.getElementById("poplog").innerHTML = rows.map(m => `<div class="bubble ${m.author === state.user.name ? "mine" : ""}"><strong>${m.author}</strong><div>${m.body}</div></div>`).join("") || "<p class='muted'>No messages yet.</p>";
 }
 
 function showRfq(id) {
@@ -349,7 +380,12 @@ function showRfq(id) {
   const ops = state.user.role !== "customer";
   const q = r.quotes[r.quotes.length - 1];
   box.innerHTML = `<article class="card" style="padding:16px;margin-top:12px"><h3>${r.reference}</h3><p>${r.service_type} · ${r.notes || ""}</p>
-    ${r.suppliers.map(s => `<h4>${s.name}</h4><ul>${s.products.map(p => `<li>${p.name} · ${p.quantity} ${p.unit} · ${p.weight_kg} kg · ${p.cbm} CBM · ${money(p.line_value)}</li>`).join("")}</ul>`).join("")}
+    ${r.documents.map(d => `<p><span class="tag ${d.status === "uploaded" ? "" : "warn"}">${d.name}: ${d.status}</span> ${d.file_name ? `<a href="/api/documents/${d.id}" target="_blank">Open</a>` : ""}</p>`).join("")}
+    <div class="row">
+      <form id="upinv"><input type="file" name="file" required /><button class="primary">Add invoice</button></form>
+      <form id="uppack"><input type="file" name="file" required /><button class="primary">Add packing list</button></form>
+      ${ops ? `<button class="ghost" id="askinv">Ask for invoice</button><button class="ghost" id="askpack">Ask for packing list</button>` : ""}
+    </div>
     ${r.quotes.map(item => `<p><strong>${item.reference}</strong> ${money(item.amount, item.currency)} · ${item.status}<br>${item.included || ""} ${item.transit ? "· " + item.transit : ""}</p>${item.status === "sent" && state.user.role === "customer" ? `<button class="primary" data-accept="${item.id}">Accept quote</button>` : ""}`).join("")}
     ${ops && r.status !== "accepted" ? `<form id="qf">
       <label>Amount</label><input name="amount" value="${q ? q.amount : 1500}" />
@@ -379,6 +415,25 @@ function showRfq(id) {
     toast(`Shipment ${out.shipment_reference}. Public token ${out.public_token}`);
     state.view = "shipments"; await renderApp();
   };
+  async function upload(formId, kind) {
+    const form = document.getElementById(formId);
+    if (!form) return;
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const data = new FormData(form);
+      const res = await fetch(`/api/rfqs/${r.id}/documents?kind=${kind}`, { method: "POST", headers: { Authorization: `Bearer ${state.token}` }, body: data });
+      if (!res.ok) return toast("Upload failed");
+      toast("Document saved");
+      await renderApp();
+    };
+  }
+  upload("upinv", "invoice");
+  upload("uppack", "packing_list");
+  const ask = async (kind) => { await api(`/api/rfqs/${r.id}/documents/request?kind=${kind}`, { method: "POST", body: {} }); toast("Document requested in chat"); await renderApp(); };
+  const askinv = document.getElementById("askinv");
+  const askpack = document.getElementById("askpack");
+  if (askinv) askinv.onclick = () => ask("invoice");
+  if (askpack) askpack.onclick = () => ask("packing_list");
 }
 
 function newRfq() {

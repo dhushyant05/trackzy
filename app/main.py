@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -43,6 +43,11 @@ if engine.dialect.name == "sqlite":
         cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(messages)").fetchall()]
         if cols and "channel" not in cols:
             conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN channel VARCHAR(20) DEFAULT 'support'")
+        doc_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(documents)").fetchall()]
+        if doc_cols and "rfq_id" not in doc_cols:
+            conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN rfq_id INTEGER")
+        if doc_cols and "file_name" not in doc_cols:
+            conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN file_name VARCHAR(255) DEFAULT ''")
         user_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()]
         if user_cols and "login_name" not in user_cols:
             conn.exec_driver_sql("ALTER TABLE users ADD COLUMN login_name VARCHAR(80)")
@@ -234,6 +239,7 @@ def rfq_dict(r: RFQ) -> dict:
             "documents_required": q.documents_required, "instructions": q.instructions,
             "payment_term": q.payment_term.value, "status": q.status.value,
         } for q in r.quotes],
+        "documents": [{"id": d.id, "name": d.name, "kind": d.kind, "status": d.status.value, "note": d.note, "file_name": d.file_name} for d in r.documents],
     }
 
 
@@ -396,7 +402,7 @@ def update_customer(customer_id: int, body: CustomerIn, user: User = Depends(req
 
 @app.get("/api/rfqs")
 def list_rfqs(user: User = Depends(require_user), db: Session = Depends(get_db)):
-    q = db.query(RFQ).options(joinedload(RFQ.customer), joinedload(RFQ.suppliers).joinedload(RFQSupplier.products), joinedload(RFQ.quotes))
+    q = db.query(RFQ).options(joinedload(RFQ.customer), joinedload(RFQ.suppliers).joinedload(RFQSupplier.products), joinedload(RFQ.quotes), joinedload(RFQ.documents))
     if user.role == Role.customer:
         q = q.filter(RFQ.customer_id == user.customer_id)
     return [rfq_dict(r) for r in q.order_by(RFQ.id.desc()).all()]
@@ -420,6 +426,53 @@ def create_rfq(body: RFQIn, user: User = Depends(require_user), db: Session = De
     db.commit()
     db.refresh(rfq)
     return rfq_dict(rfq)
+
+
+UPLOADS = ROOT / "uploads"
+UPLOADS.mkdir(exist_ok=True)
+
+
+@app.post("/api/rfqs/{rfq_id}/documents")
+async def upload_rfq_document(rfq_id: int, kind: str = Query("invoice"), file: UploadFile = File(...), user: User = Depends(require_user), db: Session = Depends(get_db)):
+    rfq = db.get(RFQ, rfq_id)
+    if not rfq or (user.role == Role.customer and user.customer_id != rfq.customer_id):
+        raise HTTPException(404, "RFQ not found")
+    label = "Commercial Invoice" if kind == "invoice" else "Packing List" if kind == "packing_list" else file.filename
+    stored = f"{rfq.reference}-{kind}-{file.filename}".replace(" ", "_")
+    (UPLOADS / stored).write_bytes(await file.read())
+    existing = db.query(Document).filter(Document.rfq_id == rfq.id, Document.kind == kind, Document.status == DocStatus.required).first()
+    if existing:
+        existing.status = DocStatus.uploaded
+        existing.file_name = stored
+        existing.note = f"Uploaded by {user.name}"
+        row = existing
+    else:
+        row = Document(rfq_id=rfq.id, name=label, kind=kind, status=DocStatus.uploaded, file_name=stored, note=f"Uploaded by {user.name}")
+        db.add(row)
+    db.commit()
+    return {"id": row.id, "name": row.name, "status": row.status.value}
+
+
+@app.post("/api/rfqs/{rfq_id}/documents/request")
+def request_rfq_document(rfq_id: int, kind: str = Query("invoice"), user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role == Role.customer:
+        raise HTTPException(403, "Ops only")
+    rfq = db.get(RFQ, rfq_id)
+    if not rfq:
+        raise HTTPException(404, "RFQ not found")
+    label = "Commercial Invoice" if kind == "invoice" else "Packing List"
+    db.add(Document(rfq_id=rfq.id, name=label, kind=kind, status=DocStatus.required, note=f"Requested by {user.name}"))
+    db.add(Message(customer_id=rfq.customer_id, author=user.name, role=user.role.value, channel="support", body=f"Please upload the {label} for {rfq.reference}."))
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/documents/{document_id}")
+def download_document(document_id: int, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    doc = db.get(Document, document_id)
+    if not doc or not doc.file_name or not (UPLOADS / doc.file_name).exists():
+        raise HTTPException(404, "File not uploaded")
+    return FileResponse(UPLOADS / doc.file_name, filename=doc.file_name)
 
 
 @app.post("/api/rfqs/{rfq_id}/quote")
