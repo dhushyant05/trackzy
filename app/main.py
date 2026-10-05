@@ -506,11 +506,16 @@ def messages(user: User = Depends(require_user), db: Session = Depends(get_db)):
     q = db.query(Message).filter(Message.channel == "support")
     if user.role == Role.customer:
         q = q.filter(Message.customer_id == user.customer_id)
-    return [{
-        "id": m.id, "author": m.author, "role": m.role, "body": m.body,
-        "customer_id": m.customer_id, "channel": m.channel,
-        "at": m.created_at.isoformat() if m.created_at else None,
-    } for m in q.order_by(Message.id).all()]
+    customers = db.query(Customer).filter(Customer.id == user.customer_id).all() if user.role == Role.customer else db.query(Customer).order_by(Customer.company).all()
+    names = {c.id: c.company for c in customers}
+    return {
+        "customers": [{"id": c.id, "company": c.company, "email": c.email} for c in customers],
+        "messages": [{
+            "id": m.id, "author": m.author, "role": m.role, "body": m.body,
+            "customer_id": m.customer_id, "customer": names.get(m.customer_id, "Customer"),
+            "at": m.created_at.isoformat() if m.created_at else None,
+        } for m in q.order_by(Message.id).all()],
+    }
 
 
 @app.post("/api/messages")

@@ -153,6 +153,7 @@ async function renderApp() {
   document.querySelectorAll("[data-view]").forEach(b => b.onclick = async () => { state.view = b.dataset.view; await renderApp(); });
   bind();
   if (openId && state.view === "rfqs") showRfq(openId);
+  startChatPoll();
 }
 
 async function tower() {
@@ -200,13 +201,36 @@ async function signups() {
 }
 
 async function supportPage() {
-  const rows = await api("/api/messages");
-  const customers = [...new Map(rows.map(m => [m.customer_id, m])).values()];
-  state.chatCustomer = state.chatCustomer || state.user.customer_id || rows[0]?.customer_id;
+  const data = await api("/api/messages");
+  const rows = data.messages || [];
+  const customers = data.customers || [];
+  state.chatCustomer = state.chatCustomer || state.user.customer_id || customers[0]?.id;
   const visible = state.user.role === "customer" ? rows : rows.filter(m => m.customer_id === state.chatCustomer);
-  return `<h2>Support</h2><div class="split">${state.user.role === "customer" ? "" : `<aside class="card" style="padding:12px">${customers.map(c => `<button class="ghost" data-cust="${c.customer_id}">Customer ${c.customer_id}</button>`).join("") || `<p class="muted">No chats</p>`}</aside>`}
-    <section class="card" style="padding:16px"><div>${visible.map(m => `<div class="bubble ${m.author === state.user.name ? "mine" : ""}"><strong>${m.author}</strong><div>${m.body}</div></div>`).join("") || `<p class="muted">No messages yet.</p>`}</div>
-    <form id="deskform" class="row"><input id="deskmsg" placeholder="Write to support" /><button class="primary">Send</button></form></section></div>`;
+  const active = customers.find(c => c.id === state.chatCustomer);
+  return `<h2>Support chat</h2>
+    <div class="split">
+      ${state.user.role === "customer" ? "" : `<aside class="card" style="padding:12px">${customers.map(c => `<button class="ghost" data-cust="${c.id}" style="display:block;width:100%;margin-bottom:6px;${c.id === state.chatCustomer ? "background:#ccfbf1" : ""}">${c.company}</button>`).join("")}</aside>`}
+      <section class="card" style="padding:16px">
+        <strong>${active ? active.company : "Your support thread"}</strong>
+        <div id="thread" style="min-height:280px;max-height:420px;overflow:auto;margin:12px 0">${visible.map(m => `<div class="bubble ${m.author === state.user.name ? "mine" : ""}"><strong>${m.author}</strong> <span class="muted">${m.role} · ${(m.at || "").slice(11, 16)}</span><div>${m.body}</div></div>`).join("") || `<p class="muted">No messages yet. Send the first one.</p>`}</div>
+        <form id="deskform" class="row"><input id="deskmsg" placeholder="Write a message" autocomplete="off" /><button class="primary">Send</button></form>
+      </section>
+    </div>`;
+}
+
+function startChatPoll() {
+  clearInterval(state.chatTimer);
+  if (state.view !== "support") return;
+  state.chatTimer = setInterval(async () => {
+    if (state.view !== "support") return clearInterval(state.chatTimer);
+    const box = document.getElementById("thread");
+    const input = document.getElementById("deskmsg");
+    if (!box || document.activeElement === input) return;
+    const data = await api("/api/messages");
+    const rows = (data.messages || []).filter(m => state.user.role === "customer" || m.customer_id === state.chatCustomer);
+    box.innerHTML = rows.map(m => `<div class="bubble ${m.author === state.user.name ? "mine" : ""}"><strong>${m.author}</strong> <span class="muted">${m.role}</span><div>${m.body}</div></div>`).join("") || `<p class="muted">No messages yet.</p>`;
+    box.scrollTop = box.scrollHeight;
+  }, 4000);
 }
 
 function bind() {
@@ -230,7 +254,11 @@ function bind() {
   const desk = document.getElementById("deskform");
   if (desk) desk.onsubmit = async (e) => {
     e.preventDefault();
-    await api("/api/messages", { method: "POST", body: { body: document.getElementById("deskmsg").value, customer_id: state.chatCustomer } });
+    const text = document.getElementById("deskmsg").value.trim();
+    if (!text) return;
+    if (state.user.role !== "customer" && !state.chatCustomer) return toast("Select a customer first");
+    await api("/api/messages", { method: "POST", body: { body: text, customer_id: state.chatCustomer } });
+    document.getElementById("deskmsg").value = "";
     await renderApp();
   };
   document.querySelectorAll("[data-approve]").forEach(b => b.onclick = async () => {
