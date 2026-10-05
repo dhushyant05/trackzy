@@ -68,7 +68,12 @@ function renderLogin() {
           <label>Email or login name</label><input id="email" value="customer@trackzy.test" />
           <label>Password</label><input id="password" type="password" value="customer123" />
           <p class="row"><button class="primary" type="submit">Enter workspace</button><button class="ghost" type="button" id="reg">Request account</button></p>
-          <p class="muted"><a href="/?track=trk_8f3a21">Track a shipment</a></p>
+        </form>
+        <form class="card" id="trackform" style="margin-top:16px">
+          <h2>Track a shipment</h2>
+          <p class="muted">Use the tracking number or shipment reference. No sign-in needed.</p>
+          <label>Tracking number</label><input id="trackno" placeholder="trk_8f3a21 or SHP-1001" />
+          <p><button class="primary" type="submit">Track</button></p>
         </form>
       </div>
     </section>`;
@@ -83,6 +88,12 @@ function renderLogin() {
     } catch (err) { toast(err.message); }
   };
   document.getElementById("reg").onclick = renderRegister;
+  document.getElementById("trackform").onsubmit = (e) => {
+    e.preventDefault();
+    const token = document.getElementById("trackno").value.trim();
+    if (!token) return toast("Enter a tracking number");
+    location.href = "/?track=" + encodeURIComponent(token);
+  };
 }
 
 function renderRegister() {
@@ -109,9 +120,13 @@ function renderRegister() {
 }
 
 async function renderPublic() {
-  const s = await api("/api/track/" + state.track);
-  const steps = (state.meta?.statuses || s.timeline.map(e => e.status));
-  const idx = steps.indexOf(s.status);
+  let s;
+  try { s = await api("/api/track/" + encodeURIComponent(state.track)); }
+  catch (err) {
+    document.getElementById("app").innerHTML = `<section class="panel-wrap" style="min-height:100vh"><div class="card" style="padding:28px"><h2>Tracking number not found</h2><p>${err.message}</p><p><a href="/">Back</a></p></div></section>`;
+    return;
+  }
+  const steps = s.timeline.map(e => e.status);
   document.getElementById("app").innerHTML = `
     <section class="panel-wrap" style="min-height:100vh">
       <div class="card" style="width:min(760px,100%);padding:28px">
@@ -119,9 +134,10 @@ async function renderPublic() {
         <h1>${s.reference}</h1>
         <p>${s.origin} → ${s.destination}</p>
         <p><span class="tag">${s.status}</span> <span class="tag warn">${s.load_type}</span></p>
-        <div class="rail">${steps.map((_, i) => `<i class="${i <= idx ? "on" : ""}"></i>`).join("")}</div>
+        <div class="rail">${steps.map(() => `<i class="on"></i>`).join("")}</div>
         ${s.timeline.map(e => `<p><strong>${e.status}</strong><br><span class="muted">${e.at || ""}</span></p>`).join("")}
         <p class="muted">Supplier, value, and documents stay behind sign-in.</p>
+        <p><a href="/">Back to sign in</a></p>
       </div>
     </section>`;
 }

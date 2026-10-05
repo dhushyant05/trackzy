@@ -611,7 +611,10 @@ def add_document(shipment_id: int, body: DocIn, user: User = Depends(require_use
 
 @app.get("/api/track/{token}")
 def public_track(token: str, db: Session = Depends(get_db)):
-    ship = db.query(Shipment).options(joinedload(Shipment.events)).filter(Shipment.public_token == token).first()
+    key = token.strip()
+    ship = db.query(Shipment).options(joinedload(Shipment.events)).filter(
+        (Shipment.public_token == key) | (Shipment.reference == key)
+    ).first()
     if not ship:
         raise HTTPException(404, "Tracking number not found")
     return shipment_dict(ship, private=False)
