@@ -59,14 +59,13 @@ function renderLogin() {
           <p>Customers raise an RFQ. Ops quotes it. Acceptance creates a shipment and a tracking number.</p>
           <div class="pills"><span>RFQ</span><span>Quote</span><span>FCL / LCL</span><span>Public tracking</span></div>
         </div>
-        <p class="muted">Demo: customer@trackzy.test / customer123 · ops@trackzy.test / ops123</p>
       </div>
       <div class="panel-wrap">
         <form class="card" id="login">
           <h2>Sign in</h2>
           <p class="muted">Use your email or login name.</p>
-          <label>Email or login name</label><input id="email" value="customer@trackzy.test" />
-          <label>Password</label><input id="password" type="password" value="customer123" />
+          <label>Email or login name</label><input id="email" />
+          <label>Password</label><input id="password" type="password" />
           <p class="row"><button class="primary" type="submit">Enter workspace</button><button class="ghost" type="button" id="reg">Request account</button></p>
         </form>
         <form class="card" id="trackform" style="margin-top:16px">
