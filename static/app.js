@@ -133,23 +133,17 @@ async function renderPublic() {
 
 function shell(body) {
   const role = state.user.role;
-  const links = [["rfqs", "RFQs"], ["shipments", "Shipments"], ["support", "Support"]];
+  const links = [["rfqs", "RFQs"], ["shipments", "Shipments"]];
   if (role !== "customer") links.push(["customers", "Customers"], ["direct", "New shipment"], ["signups", "Accounts"]);
   if (role === "admin" || role === "manager_ops") links.unshift(["tower", "Overview"]);
   return `<div class="app">
     <aside class="side">
       <div class="brand"><img class="logo" src="/static/logo.png" alt="Trackzy" /><div><strong>Trackzy</strong><div class="muted">${role.replaceAll("_", " ")}</div></div></div>
-      ${links.map(([id, label]) => `<button data-view="${id}" class="${state.view === id ? "on" : ""}">${label}${id === "support" && state.unread ? ` <span class="tag warn">${state.unread}</span>` : ""}</button>`).join("")}
+      ${links.map(([id, label]) => `<button data-view="${id}" class="${state.view === id ? "on" : ""}">${label}</button>`).join("")}
     </aside>
     <main class="main">
       <div class="topbar"><div><strong>${state.user.name}</strong><div class="muted">${state.user.email}</div></div><button class="ghost" id="out">Sign out</button></div>
       ${body}
-      <button class="primary" id="chatbtn" style="position:fixed;right:22px;bottom:22px;z-index:20;border-radius:999px;padding:12px 16px">Chat</button>
-      <section id="chatpop" class="card" style="display:none;position:fixed;right:22px;bottom:76px;width:340px;z-index:20;padding:12px">
-        <div class="row" style="justify-content:space-between"><strong>Support</strong><button class="ghost" id="chatclose">Close</button></div>
-        <div id="poplog" style="height:240px;overflow:auto;margin:8px 0"></div>
-        <form id="popform" class="row"><input id="popmsg" placeholder="Message support" /><button class="primary">Send</button></form>
-      </section>
     </main>
   </div>`;
 }
@@ -163,14 +157,12 @@ async function renderApp() {
   if (state.view === "direct") body = directForm();
   if (state.view === "customers") body = await customersPage();
   if (state.view === "signups") body = await signups();
-  if (state.view === "support") body = await supportPage();
   document.getElementById("app").innerHTML = shell(body);
   document.getElementById("out").onclick = () => { localStorage.removeItem("trackzyToken"); location.reload(); };
   document.querySelectorAll("[data-view]").forEach(b => b.onclick = async () => { state.view = b.dataset.view; await renderApp(); });
   bind();
   if (openId && state.view === "rfqs") showRfq(openId);
-  startChatPoll();
-  heartbeat();
+  loadChatwoot();
 }
 
 async function tower() {
