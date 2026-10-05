@@ -21,29 +21,24 @@ function money(n, c = "USD") { return `${c} ${Number(n || 0).toLocaleString()}`;
 function toast(msg) { alert(msg); }
 
 function loadChatwoot() {
+  if (window.__tawkLoaded) return;
   fetch("/api/chat/config").then(r => r.json()).then(cfg => {
-    if (cfg.provider !== "tawk" || !cfg.property_id) return;
+    if (!cfg.enabled || !cfg.property_id || !cfg.widget_id) return;
+    window.__tawkLoaded = true;
     window.Tawk_API = window.Tawk_API || {};
     window.Tawk_LoadStart = new Date();
     const s = document.createElement("script");
     s.async = true;
-    s.src = `https://embed.tawk.to/${cfg.property_id}/${cfg.widget_id || "default"}`;
+    s.src = `https://embed.tawk.to/${cfg.property_id}/${cfg.widget_id}`;
     s.charset = "UTF-8";
     s.setAttribute("crossorigin", "*");
     document.body.appendChild(s);
-    const hide = () => {
-      const btn = document.getElementById("chatbtn");
-      const pop = document.getElementById("chatpop");
-      if (btn) btn.style.display = "none";
-      if (pop) pop.style.display = "none";
-    };
-    setTimeout(hide, 600);
   }).catch(() => {});
 }
 
 async function boot() {
   const params = new URLSearchParams(location.search);
-  if (params.get("track")) { state.track = params.get("track"); return renderPublic(); }
+  if (params.get("track")) { state.track = params.get("track"); loadChatwoot(); return renderPublic(); }
   loadChatwoot();
   if (!state.token) return renderLogin();
   try {

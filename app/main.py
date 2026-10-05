@@ -281,11 +281,18 @@ def me(user: User = Depends(require_user)):
 
 @app.get("/api/chat/config")
 def chat_config():
-    property_id = os.environ.get("TAWK_PROPERTY_ID", "")
-    widget_id = os.environ.get("TAWK_WIDGET_ID", "default")
+    raw = os.environ.get("TAWK_PROPERTY_ID", "").strip().rstrip("/")
+    widget_id = os.environ.get("TAWK_WIDGET_ID", "").strip()
+    if "embed.tawk.to/" in raw:
+        raw = raw.split("embed.tawk.to/", 1)[1]
+    if "/" in raw:
+        property_id, embedded_widget = raw.split("/", 1)
+        widget_id = widget_id or embedded_widget
+    else:
+        property_id = raw
     return {
-        "provider": "tawk" if property_id else "trackzy",
-        "enabled": bool(property_id),
+        "provider": "tawk" if property_id and widget_id else "missing",
+        "enabled": bool(property_id and widget_id),
         "property_id": property_id,
         "widget_id": widget_id,
     }
