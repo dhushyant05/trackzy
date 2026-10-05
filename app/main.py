@@ -1,5 +1,4 @@
-import os
-from pathlib import Path
+from datetime import datetime, timedelta
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,6 +43,10 @@ if engine.dialect.name == "sqlite":
         user_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()]
         if user_cols and "login_name" not in user_cols:
             conn.exec_driver_sql("ALTER TABLE users ADD COLUMN login_name VARCHAR(80)")
+        if user_cols and "last_seen" not in user_cols:
+            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN last_seen DATETIME")
+        if user_cols and "last_read_message_id" not in user_cols:
+            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN last_read_message_id INTEGER DEFAULT 0")
         cust_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(customers)").fetchall()]
         if cust_cols and "address" not in cust_cols:
             conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN address TEXT DEFAULT ''")
@@ -532,6 +535,33 @@ def post_message(body: MessageIn, user: User = Depends(require_user), db: Sessio
     db.add(msg)
     db.commit()
     return {"id": msg.id}
+
+
+@app.post("/api/presence")
+def presence(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    user.last_seen = datetime.utcnow()
+    if user.role != Role.customer:
+        latest = db.query(Message).order_by(Message.id.desc()).first()
+        user.last_read_message_id = latest.id if latest and user.last_read_message_id and False else user.last_read_message_id
+    db.commit()
+    cutoff = datetime.utcnow() - timedelta(seconds=45)
+    staff = db.query(User).filter(User.role.in_([Role.ops, Role.support, Role.manager_ops, Role.admin]), User.last_seen != None, User.last_seen >= cutoff).all()
+    unread = 0
+    if user.role != Role.customer:
+        unread = db.query(Message).filter(Message.role == "customer", Message.id > (user.last_read_message_id or 0)).count()
+    return {
+        "online": [{"name": u.name, "role": u.role.value} for u in staff],
+        "unread": unread,
+    }
+
+
+@app.post("/api/messages/read")
+def mark_read(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    latest = db.query(Message).order_by(Message.id.desc()).first()
+    user.last_read_message_id = latest.id if latest else 0
+    user.last_seen = datetime.utcnow()
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/")

@@ -85,6 +85,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(180), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(200))
     login_name: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_read_message_id: Mapped[int] = mapped_column(Integer, default=0)
     role: Mapped[Role] = mapped_column(Enum(Role))
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

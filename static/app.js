@@ -130,7 +130,7 @@ function shell(body) {
   return `<div class="app">
     <aside class="side">
       <div class="brand"><div class="mark">T</div><div><strong>Trackzy</strong><div class="muted">${role.replaceAll("_", " ")}</div></div></div>
-      ${links.map(([id, label]) => `<button data-view="${id}" class="${state.view === id ? "on" : ""}">${label}</button>`).join("")}
+      ${links.map(([id, label]) => `<button data-view="${id}" class="${state.view === id ? "on" : ""}">${label}${id === "support" && state.unread ? ` <span class="tag warn">${state.unread}</span>` : ""}</button>`).join("")}
     </aside>
     <main class="main">
       <div class="topbar"><div><strong>${state.user.name}</strong><div class="muted">${state.user.email}</div></div><button class="ghost" id="out">Sign out</button></div>
@@ -154,6 +154,7 @@ async function renderApp() {
   bind();
   if (openId && state.view === "rfqs") showRfq(openId);
   startChatPoll();
+  heartbeat();
 }
 
 async function tower() {
@@ -212,15 +213,44 @@ async function supportPage() {
       ${state.user.role === "customer" ? "" : `<aside class="card" style="padding:12px">${customers.map(c => `<button class="ghost" data-cust="${c.id}" style="display:block;width:100%;margin-bottom:6px;${c.id === state.chatCustomer ? "background:#ccfbf1" : ""}">${c.company}</button>`).join("")}</aside>`}
       <section class="card" style="padding:16px">
         <strong>${active ? active.company : "Your support thread"}</strong>
+        <span id="online" class="tag" style="margin-left:8px">Checking</span>
+        ${state.unread ? `<p class="tag warn">Reminder: ${state.unread} customer message${state.unread > 1 ? "s" : ""} waiting</p>` : ""}
         <div id="thread" style="min-height:280px;max-height:420px;overflow:auto;margin:12px 0">${visible.map(m => `<div class="bubble ${m.author === state.user.name ? "mine" : ""}"><strong>${m.author}</strong> <span class="muted">${m.role} · ${(m.at || "").slice(11, 16)}</span><div>${m.body}</div></div>`).join("") || `<p class="muted">No messages yet. Send the first one.</p>`}</div>
         <form id="deskform" class="row"><input id="deskmsg" placeholder="Write a message" autocomplete="off" /><button class="primary">Send</button></form>
       </section>
     </div>`;
 }
 
+function heartbeat() {
+  clearInterval(state.beat);
+  const tick = async () => {
+    if (!state.token) return;
+    const data = await api("/api/presence", { method: "POST", body: {} }).catch(() => null);
+    if (!data) return;
+    state.unread = data.unread || 0;
+    state.online = data.online || [];
+    const badge = document.querySelector("[data-view='support']");
+    if (badge) badge.innerHTML = `Support${state.unread ? ` <span class="tag warn">${state.unread}</span>` : ""}`;
+    const online = document.getElementById("online");
+    if (online) {
+      const staff = state.online.filter(u => u.role === "ops" || u.role === "support" || u.role === "manager_ops" || u.role === "admin");
+      online.textContent = staff.length ? `Online: ${staff.map(u => u.name).join(", ")}` : "Ops offline";
+      online.style.background = staff.length ? "#ecfdf5" : "#fee2e2";
+    }
+    if (state.unread && state.user.role !== "customer" && state.view !== "support" && state.unread !== state.alerted) {
+      state.alerted = state.unread;
+      if (Notification.permission === "granted") new Notification("Trackzy support", { body: `${state.unread} customer message waiting` });
+    }
+  };
+  tick();
+  state.beat = setInterval(tick, 15000);
+  if (state.user && state.user.role !== "customer" && Notification.permission === "default") Notification.requestPermission();
+}
+
 function startChatPoll() {
   clearInterval(state.chatTimer);
   if (state.view !== "support") return;
+  if (state.user.role !== "customer") api("/api/messages/read", { method: "POST", body: {} }).then(() => { state.unread = 0; });
   state.chatTimer = setInterval(async () => {
     if (state.view !== "support") return clearInterval(state.chatTimer);
     const box = document.getElementById("thread");
