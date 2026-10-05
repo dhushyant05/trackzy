@@ -16,7 +16,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://trackzy:${POSTGRES_PASSWORD:-trackzy}@db:5432/trackzy
       PUBLIC_BASE_URL: https://trackzy.in
-      TAWK_PROPERTY_ID: ${TAWK_PROPERTY_ID:-}
+      TAWK_PROPERTY_ID: ${TAWK_PROPERTY_ID:-6ac41539618b6434c2779672}
       TAWK_WIDGET_ID: ${TAWK_WIDGET_ID:-}
     ports:
       - "8000:8000"
