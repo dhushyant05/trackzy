@@ -49,7 +49,7 @@ function renderLogin() {
   document.getElementById("app").innerHTML = `
     <section class="auth">
       <div class="hero">
-        <div class="brand"><div class="mark">T</div><div><strong>Trackzy</strong><div class="muted">Sourceeasy logistics</div></div></div>
+        <div class="brand"><img class="logo" src="/static/logo.png" alt="Trackzy" /><div><strong>Trackzy</strong><div class="muted">Sourceeasy logistics</div></div></div>
         <div>
           <h1>Move cargo from quote to delivery.</h1>
           <p>Customers raise an RFQ. Ops quotes it. Acceptance creates a shipment and a tracking number.</p>
@@ -111,7 +111,7 @@ async function renderPublic() {
   document.getElementById("app").innerHTML = `
     <section class="panel-wrap" style="min-height:100vh">
       <div class="card" style="width:min(760px,100%);padding:28px">
-        <div class="brand"><div class="mark">T</div><div><strong>Trackzy</strong><div class="muted">Public tracking</div></div></div>
+        <div class="brand"><img class="logo" src="/static/logo.png" alt="Trackzy" /><div><strong>Trackzy</strong><div class="muted">Public tracking</div></div></div>
         <h1>${s.reference}</h1>
         <p>${s.origin} → ${s.destination}</p>
         <p><span class="tag">${s.status}</span> <span class="tag warn">${s.load_type}</span></p>
@@ -125,11 +125,11 @@ async function renderPublic() {
 function shell(body) {
   const role = state.user.role;
   const links = [["rfqs", "RFQs"], ["shipments", "Shipments"], ["support", "Support"]];
-  if (role !== "customer") links.push(["direct", "New shipment"], ["signups", "Accounts"]);
+  if (role !== "customer") links.push(["customers", "Customers"], ["direct", "New shipment"], ["signups", "Accounts"]);
   if (role === "admin" || role === "manager_ops") links.unshift(["tower", "Overview"]);
   return `<div class="app">
     <aside class="side">
-      <div class="brand"><div class="mark">T</div><div><strong>Trackzy</strong><div class="muted">${role.replaceAll("_", " ")}</div></div></div>
+      <div class="brand"><img class="logo" src="/static/logo.png" alt="Trackzy" /><div><strong>Trackzy</strong><div class="muted">${role.replaceAll("_", " ")}</div></div></div>
       ${links.map(([id, label]) => `<button data-view="${id}" class="${state.view === id ? "on" : ""}">${label}${id === "support" && state.unread ? ` <span class="tag warn">${state.unread}</span>` : ""}</button>`).join("")}
     </aside>
     <main class="main">
@@ -146,6 +146,7 @@ async function renderApp() {
   if (state.view === "rfqs") body = await rfqs();
   if (state.view === "shipments") body = await shipments();
   if (state.view === "direct") body = directForm();
+  if (state.view === "customers") body = await customersPage();
   if (state.view === "signups") body = await signups();
   if (state.view === "support") body = await supportPage();
   document.getElementById("app").innerHTML = shell(body);
@@ -196,7 +197,43 @@ function directForm() {
   </form>`;
 }
 
-async function signups() {
+async function customersPage() {
+  const rows = await api("/api/customers");
+  state.data.customers = rows;
+  return `<h2>Customer database</h2>
+    <div class="card" style="padding:8px 16px"><table class="table"><thead><tr><th>Company</th><th>Contact</th><th>Preference</th><th>Orders</th><th></th></tr></thead>
+    <tbody>${rows.map(c => `<tr><td><strong>${c.company}</strong><div class="muted">${c.email}</div></td><td>${c.contact_name}<br><span class="muted">${c.phone}</span></td><td>${c.preferred_lane || "Not set"} · ${c.preferred_load}</td><td>${c.orders} shipments · ${c.rfqs} RFQs</td><td><button class="ghost" data-customer="${c.id}">Open</button></td></tr>`).join("")}</tbody></table></div>
+    <div id="customer"></div>`;
+}
+
+async function showCustomer(id) {
+  const c = await api("/api/customers/" + id);
+  document.getElementById("customer").innerHTML = `<article class="card" style="padding:16px;margin-top:12px">
+    <h3>${c.company}</h3>
+    <p>${c.contact_name} · ${c.email} · ${c.phone}<br>${c.address} ${c.country}</p>
+    <form id="custform">
+      <label>Preferred lane</label><input name="preferred_lane" value="${c.preferred_lane || ""}" />
+      <label>Preferred load</label><select name="preferred_load"><option ${c.preferred_load === "LCL" ? "selected" : ""}>LCL</option><option ${c.preferred_load === "FCL" ? "selected" : ""}>FCL</option></select>
+      <label>Payment preference</label><input name="payment_preference" value="${c.payment_preference || ""}" />
+      <label>Notes</label><textarea name="notes">${c.notes || ""}</textarea>
+      <label>Add history note</label><input name="history_note" placeholder="What changed or what they asked for" />
+      <input type="hidden" name="company" value="${c.company}" /><input type="hidden" name="contact_name" value="${c.contact_name}" />
+      <input type="hidden" name="email" value="${c.email}" /><input type="hidden" name="phone" value="${c.phone}" />
+      <input type="hidden" name="address" value="${c.address || ""}" /><input type="hidden" name="country" value="${c.country || ""}" />
+      <p><button class="primary">Save customer</button></p>
+    </form>
+    <h4>Previous orders</h4>${c.orders.map(o => `<p>${o.reference} · ${o.origin} → ${o.destination} · ${o.status} · ${money(o.amount, o.currency)}</p>`).join("") || "<p class='muted'>No shipments yet.</p>"}
+    <h4>RFQs</h4>${c.rfqs.map(r => `<p>${r.reference} · ${r.origin} → ${r.destination} · ${r.status}</p>`).join("") || "<p class='muted'>No RFQs.</p>"}
+    <h4>History</h4>${c.history.map(n => `<p><strong>${n.author}</strong> ${n.body}</p>`).join("") || "<p class='muted'>No notes yet.</p>"}
+  </article>`;
+  document.getElementById("custform").onsubmit = async (e) => {
+    e.preventDefault();
+    await api("/api/customers/" + id, { method: "PATCH", body: Object.fromEntries(new FormData(e.target).entries()) });
+    toast("Customer saved");
+    await renderApp();
+    await showCustomer(id);
+  };
+}
   const rows = await api("/api/registrations");
   return `<h2>Account requests</h2><div class="list">${rows.map(r => `<article class="card" style="padding:16px;margin-bottom:12px"><strong>${r.name}</strong> <span class="tag">${r.status}</span><div class="muted">${r.login_name} · ${r.email} · ${r.phone}</div><p>${r.address}</p>${r.status === "pending" ? `<div class="row"><input data-pass="${r.id}" value="customer123" /><input data-co="${r.id}" placeholder="Company" /><button class="primary" data-approve="${r.id}">Create account</button><button class="ghost" data-reject="${r.id}">Reject</button></div>` : `<p class="muted">${r.note || ""}</p>`}</article>`).join("") || `<p class="muted">No requests.</p>`}</div>`;
 }
@@ -265,6 +302,7 @@ function startChatPoll() {
 
 function bind() {
   document.querySelectorAll("[data-open]").forEach(b => b.onclick = () => showRfq(b.dataset.open));
+  document.querySelectorAll("[data-customer]").forEach(b => b.onclick = () => showCustomer(b.dataset.customer));
   document.querySelectorAll("[data-save]").forEach(b => b.onclick = async () => {
     const sel = document.querySelector(`[data-status="${b.dataset.save}"]`);
     await api(`/api/shipments/${b.dataset.save}/status`, { method: "POST", body: { status: sel.value, note: "Updated from ops" } });

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from .models import (
     STATUSES,
     Customer,
+    CustomerNote,
     Document,
     DocStatus,
     LoadType,
@@ -46,8 +47,8 @@ def seed(db: Session) -> None:
     if db.query(User).first():
         return
 
-    acme = Customer(company="Acme Imports", contact_name="Priya Shah", email="priya@acme.example", phone="+91 98400 11001", country="India")
-    lotus = Customer(company="Lotus Retail", contact_name="Arun Mehta", email="arun@lotus.example", phone="+91 98200 22002", country="India")
+    acme = Customer(company="Acme Imports", contact_name="Priya Shah", email="priya@acme.example", phone="+91 98400 11001", country="India", address="12 Harbor Road, Chennai", preferred_lane="China to Nhava Sheva", preferred_load="LCL", payment_preference="pay_on_delivery", notes="Prefers inspection before stuffing.")
+    lotus = Customer(company="Lotus Retail", contact_name="Arun Mehta", email="arun@lotus.example", phone="+91 98200 22002", country="India", address="44 Market Lane, Mumbai", preferred_lane="Shenzhen to Mundra", preferred_load="FCL", payment_preference="partial_advance")
     db.add_all([acme, lotus])
     db.flush()
 
@@ -138,4 +139,5 @@ def seed(db: Session) -> None:
     ])
     db.add(Message(customer_id=acme.id, author="Priya Shah", role="customer", channel="support", body="Can we add the Ningbo glass to the next sailing?"))
     db.add(Message(customer_id=acme.id, author="Leela Support", role="support", channel="support", body="Yes. Send the packing photos and ops will quote it on RFQ-1008."))
+    db.add(CustomerNote(customer_id=acme.id, author="Omar Ops", body="Previous order SHP-1001 was LCL door-to-door, pay on delivery."))
     db.commit()

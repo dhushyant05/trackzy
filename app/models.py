@@ -104,11 +104,28 @@ class Customer(Base):
     phone: Mapped[str] = mapped_column(String(40), default="")
     address: Mapped[str] = mapped_column(Text, default="")
     country: Mapped[str] = mapped_column(String(80), default="")
+    preferred_lane: Mapped[str] = mapped_column(String(180), default="")
+    preferred_load: Mapped[str] = mapped_column(String(20), default="LCL")
+    payment_preference: Mapped[str] = mapped_column(String(40), default="pay_on_delivery")
+    notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     users: Mapped[list[User]] = relationship(back_populates="customer")
     rfqs: Mapped[list["RFQ"]] = relationship(back_populates="customer")
     shipments: Mapped[list["Shipment"]] = relationship(back_populates="customer")
+    history: Mapped[list["CustomerNote"]] = relationship(back_populates="customer", cascade="all, delete-orphan")
+
+
+class CustomerNote(Base):
+    __tablename__ = "customer_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
+    author: Mapped[str] = mapped_column(String(120))
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    customer: Mapped[Customer] = relationship(back_populates="history")
 
 
 class SignupRequest(Base):

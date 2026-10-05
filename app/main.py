@@ -1,4 +1,6 @@
+import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +13,7 @@ from .database import Base, engine, get_db
 from .models import (
     STATUSES,
     Customer,
+    CustomerNote,
     Document,
     DocStatus,
     LoadType,
@@ -50,6 +53,14 @@ if engine.dialect.name == "sqlite":
         cust_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(customers)").fetchall()]
         if cust_cols and "address" not in cust_cols:
             conn.exec_driver_sql("ALTER TABLE customers ADD COLUMN address TEXT DEFAULT ''")
+        for col, ddl in [
+            ("preferred_lane", "VARCHAR(180) DEFAULT ''"),
+            ("preferred_load", "VARCHAR(20) DEFAULT 'LCL'"),
+            ("payment_preference", "VARCHAR(40) DEFAULT 'pay_on_delivery'"),
+            ("notes", "TEXT DEFAULT ''"),
+        ]:
+            if cust_cols and col not in cust_cols:
+                conn.exec_driver_sql(f"ALTER TABLE customers ADD COLUMN {col} {ddl}")
 with next(get_db()) as _db:
     seed(_db)
 
@@ -92,6 +103,20 @@ class ReviewIn(BaseModel):
     password: str = "customer123"
     company: str = ""
     note: str = ""
+
+
+class CustomerIn(BaseModel):
+    company: str = ""
+    contact_name: str = ""
+    email: str = ""
+    phone: str = ""
+    address: str = ""
+    country: str = ""
+    preferred_lane: str = ""
+    preferred_load: str = "LCL"
+    payment_preference: str = "pay_on_delivery"
+    notes: str = ""
+    history_note: str = ""
 
 
 class ProductIn(BaseModel):
@@ -325,7 +350,48 @@ def reject_registration(request_id: int, body: ReviewIn, user: User = Depends(re
 @app.get("/api/customers")
 def customers(user: User = Depends(require_user), db: Session = Depends(get_db)):
     rows = db.query(Customer).filter(Customer.id == user.customer_id).all() if user.role == Role.customer else db.query(Customer).order_by(Customer.company).all()
-    return [{"id": c.id, "company": c.company, "contact_name": c.contact_name, "email": c.email, "phone": c.phone, "country": c.country} for c in rows]
+    return [{
+        "id": c.id, "company": c.company, "contact_name": c.contact_name, "email": c.email,
+        "phone": c.phone, "address": c.address, "country": c.country,
+        "preferred_lane": c.preferred_lane, "preferred_load": c.preferred_load,
+        "payment_preference": c.payment_preference, "notes": c.notes,
+        "orders": len(c.shipments), "rfqs": len(c.rfqs),
+    } for c in rows]
+
+
+@app.get("/api/customers/{customer_id}")
+def customer_detail(customer_id: int, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role == Role.customer and user.customer_id != customer_id:
+        raise HTTPException(403, "Not your account")
+    c = db.query(Customer).options(joinedload(Customer.rfqs), joinedload(Customer.shipments), joinedload(Customer.history)).filter(Customer.id == customer_id).first()
+    if not c:
+        raise HTTPException(404, "Customer not found")
+    messages = db.query(Message).filter(Message.customer_id == c.id).order_by(Message.id.desc()).limit(8).all()
+    return {
+        "id": c.id, "company": c.company, "contact_name": c.contact_name, "email": c.email,
+        "phone": c.phone, "address": c.address, "country": c.country,
+        "preferred_lane": c.preferred_lane, "preferred_load": c.preferred_load,
+        "payment_preference": c.payment_preference, "notes": c.notes,
+        "rfqs": [{"id": r.id, "reference": r.reference, "origin": r.origin, "destination": r.destination, "status": r.status.value} for r in c.rfqs],
+        "orders": [{"id": s.id, "reference": s.reference, "origin": s.origin, "destination": s.destination, "status": s.status, "amount": s.amount, "currency": s.currency} for s in c.shipments],
+        "history": [{"author": n.author, "body": n.body, "at": n.created_at.isoformat() if n.created_at else None} for n in c.history],
+        "messages": [{"author": m.author, "body": m.body} for m in messages],
+    }
+
+
+@app.patch("/api/customers/{customer_id}")
+def update_customer(customer_id: int, body: CustomerIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role == Role.customer:
+        raise HTTPException(403, "Ops only")
+    c = db.get(Customer, customer_id)
+    if not c:
+        raise HTTPException(404, "Customer not found")
+    for key in ["company", "contact_name", "email", "phone", "address", "country", "preferred_lane", "preferred_load", "payment_preference", "notes"]:
+        setattr(c, key, getattr(body, key))
+    if body.history_note.strip():
+        db.add(CustomerNote(customer_id=c.id, author=user.name, body=body.history_note.strip()))
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/rfqs")
