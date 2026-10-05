@@ -140,6 +140,7 @@ function shell(body) {
 }
 
 async function renderApp() {
+  const openId = state.openRfq;
   let body = "";
   if (state.view === "tower") body = await tower();
   if (state.view === "rfqs") body = await rfqs();
@@ -151,6 +152,7 @@ async function renderApp() {
   document.getElementById("out").onclick = () => { localStorage.removeItem("trackzyToken"); location.reload(); };
   document.querySelectorAll("[data-view]").forEach(b => b.onclick = async () => { state.view = b.dataset.view; await renderApp(); });
   bind();
+  if (openId && state.view === "rfqs") showRfq(openId);
 }
 
 async function tower() {
@@ -245,18 +247,34 @@ function bind() {
 }
 
 function showRfq(id) {
+  state.openRfq = id;
   const r = state.data.rfqs.find(x => String(x.id) === String(id));
   const box = document.getElementById("detail");
   const ops = state.user.role !== "customer";
+  const q = r.quotes[r.quotes.length - 1];
   box.innerHTML = `<article class="card" style="padding:16px;margin-top:12px"><h3>${r.reference}</h3><p>${r.service_type} · ${r.notes || ""}</p>
     ${r.suppliers.map(s => `<h4>${s.name}</h4><ul>${s.products.map(p => `<li>${p.name} · ${p.quantity} ${p.unit} · ${p.weight_kg} kg · ${p.cbm} CBM · ${money(p.line_value)}</li>`).join("")}</ul>`).join("")}
-    ${r.quotes.map(q => `<p><strong>${q.reference}</strong> ${money(q.amount, q.currency)} · ${q.status}<br>${q.included || ""}</p>${q.status === "sent" && state.user.role === "customer" ? `<button class="primary" data-accept="${q.id}">Accept quote</button>` : ""}`).join("")}
-    ${ops && r.status !== "accepted" ? `<form id="qf"><label>Amount</label><input name="amount" value="1500" /><label>Included</label><input name="included" value="Export, freight, destination CFS" /><p><button class="primary">Send quote</button></p></form>` : ""}
+    ${r.quotes.map(item => `<p><strong>${item.reference}</strong> ${money(item.amount, item.currency)} · ${item.status}<br>${item.included || ""} ${item.transit ? "· " + item.transit : ""}</p>${item.status === "sent" && state.user.role === "customer" ? `<button class="primary" data-accept="${item.id}">Accept quote</button>` : ""}`).join("")}
+    ${ops && r.status !== "accepted" ? `<form id="qf">
+      <label>Amount</label><input name="amount" value="${q ? q.amount : 1500}" />
+      <label>Currency</label><input name="currency" value="${q ? q.currency : "USD"}" />
+      <label>Transit</label><input name="transit" value="${q ? (q.transit || "") : "18-22 days"}" />
+      <label>Included</label><input name="included" value="${q ? (q.included || "") : "Export, freight, destination CFS"}" />
+      <label>Excluded</label><input name="excluded" value="${q ? (q.excluded || "") : "Duty and last mile"}" />
+      <label>Documents required</label><input name="documents_required" value="${q ? (q.documents_required || "") : "Invoice, packing list"}" />
+      <label>Instructions</label><input name="instructions" value="${q ? (q.instructions || "") : ""}" />
+      <label>Payment</label><select name="payment_term"><option ${q && q.payment_term === "pay_on_delivery" ? "selected" : ""}>pay_on_delivery</option><option ${q && q.payment_term === "partial_advance" ? "selected" : ""}>partial_advance</option><option ${q && q.payment_term === "full_advance" ? "selected" : ""}>full_advance</option></select>
+      <p><button class="primary">${q ? "Save quote edits" : "Send quote"}</button></p>
+    </form>` : ""}
   </article>`;
   const qf = document.getElementById("qf");
   if (qf) qf.onsubmit = async (e) => {
     e.preventDefault();
-    await api(`/api/rfqs/${r.id}/quote`, { method: "POST", body: { amount: Number(new FormData(qf).get("amount")), service_type: r.service_type, origin: r.origin, destination: r.destination, included: new FormData(qf).get("included"), payment_term: "pay_on_delivery" } });
+    const f = Object.fromEntries(new FormData(qf).entries());
+    const payload = { ...f, amount: Number(f.amount), service_type: r.service_type, origin: r.origin, destination: r.destination };
+    if (q && q.status !== "accepted") await api(`/api/quotes/${q.id}`, { method: "PATCH", body: payload });
+    else await api(`/api/rfqs/${r.id}/quote`, { method: "POST", body: payload });
+    toast("Quote saved");
     await renderApp();
   };
   const acc = box.querySelector("[data-accept]");

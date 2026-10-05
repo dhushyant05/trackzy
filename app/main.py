@@ -367,6 +367,22 @@ def quote_rfq(rfq_id: int, body: QuoteIn, user: User = Depends(require_user), db
     return rfq_dict(rfq)
 
 
+@app.patch("/api/quotes/{quote_id}")
+def edit_quote(quote_id: int, body: QuoteIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role == Role.customer:
+        raise HTTPException(403, "Ops only")
+    quote = db.get(Quote, quote_id)
+    if not quote:
+        raise HTTPException(404, "Quote not found")
+    if quote.status == QuoteStatus.accepted:
+        raise HTTPException(400, "Accepted quote cannot be edited")
+    for key, value in body.model_dump().items():
+        setattr(quote, key, value)
+    quote.status = QuoteStatus.sent
+    db.commit()
+    return {"id": quote.id, "amount": quote.amount, "included": quote.included, "transit": quote.transit}
+
+
 @app.post("/api/quotes/{quote_id}/accept")
 def accept_quote(quote_id: int, user: User = Depends(require_user), db: Session = Depends(get_db)):
     quote = db.get(Quote, quote_id)
