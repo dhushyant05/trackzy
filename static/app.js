@@ -56,7 +56,6 @@ function renderLogin() {
         <div class="brand"><img class="logo" src="/static/logo.png" alt="Trackzy" /><div><strong>Trackzy</strong></div></div>
         <div>
           <h1>Move cargo from quote to delivery.</h1>
-          <p>Customers raise an RFQ. Ops quotes it. Acceptance creates a shipment and a tracking number.</p>
           <div class="pills"><span>RFQ</span><span>Quote</span><span>FCL / LCL</span><span>Public tracking</span></div>
         </div>
       </div>
