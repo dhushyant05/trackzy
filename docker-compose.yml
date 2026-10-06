@@ -7,12 +7,18 @@ services:
       POSTGRES_DB: trackzy
     volumes:
       - trackzy-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trackzy -d trackzy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   trackzy:
     build: .
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg2://trackzy:${POSTGRES_PASSWORD:-trackzy}@db:5432/trackzy
       PUBLIC_BASE_URL: https://trackzy.in

@@ -25,7 +25,17 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-If the VPS already has Nginx or Caddy on ports 80 and 443, do not publish 8000 publicly. Use `deploy/trackzy.in.nginx.conf` to proxy `trackzy.in` to `127.0.0.1:8000`, then add a certificate with certbot. The app container talks to Postgres on the compose network as `db`. Postgres is not exposed to the internet.
+If the VPS already has Nginx or Caddy on ports 80 and 443, do not publish 8000 publicly. Use `deploy/trackzy.in.nginx.conf` to proxy `trackzy.in` to `127.0.0.1:8000`, then add a certificate with certbot. The app container talks to Postgres on the compose network as `db`. Postgres is not exposed to the internet. The app password is built from `POSTGRES_PASSWORD` only. Do not set a separate `DATABASE_URL` in `.env`; an old value such as `change-this` will not match a volume that was first created with `trackzy`.
+
+If the app logs `password authentication failed for user trackzy`, the volume was initialized with a different password. Reset it once:
+
+```bash
+docker compose down
+docker volume rm trackzy_trackzy-pg
+docker compose up -d --build
+```
+
+Chatwoot is not part of this stack. If an older checkout still has a `chatwoot` container on port 3000, pull this repo and run `docker compose up -d --remove-orphans` so it does not clash with fortuneai-api.
 
 ## Chat
 
