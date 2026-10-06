@@ -393,6 +393,7 @@ function bind() {
   document.querySelectorAll("[data-role-save]").forEach(b => b.onclick = async () => { await api(`/api/users/${b.dataset.roleSave}?role=${document.querySelector(`[data-role='${b.dataset.roleSave}']`).value}`, { method: "PATCH", body: {} }); toast("Role saved"); });
   const mode = document.getElementById("mode");
   if (mode) mode.onsubmit = async (e) => { e.preventDefault(); await api("/api/settings?support_mode=" + new FormData(mode).get("support_mode"), { method: "PATCH", body: {} }); toast("Routing saved"); };
+  document.querySelectorAll("[data-open]").forEach(b => b.onclick = async () => {
     state.view = "rfqs";
     state.openRfq = b.dataset.open;
     await renderApp();
