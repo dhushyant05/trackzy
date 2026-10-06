@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
@@ -43,6 +43,9 @@ if engine.dialect.name == "sqlite":
         cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(messages)").fetchall()]
         if cols and "channel" not in cols:
             conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN channel VARCHAR(20) DEFAULT 'support'")
+        rfq_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(rfqs)").fetchall()]
+        if rfq_cols and "assigned_to_id" not in rfq_cols:
+            conn.exec_driver_sql("ALTER TABLE rfqs ADD COLUMN assigned_to_id INTEGER")
         doc_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(documents)").fetchall()]
         if doc_cols and "rfq_id" not in doc_cols:
             conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN rfq_id INTEGER")
@@ -399,17 +402,70 @@ def customer_detail(customer_id: int, user: User = Depends(require_user), db: Se
 
 @app.patch("/api/customers/{customer_id}")
 def update_customer(customer_id: int, body: CustomerIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    if user.role == Role.customer:
-        raise HTTPException(403, "Ops only")
+    if user.role == Role.customer and user.customer_id != customer_id:
+        raise HTTPException(403, "Not your account")
     c = db.get(Customer, customer_id)
     if not c:
         raise HTTPException(404, "Customer not found")
-    for key in ["company", "contact_name", "email", "phone", "address", "country", "preferred_lane", "preferred_load", "payment_preference", "notes"]:
+    fields = ["company", "contact_name", "email", "phone", "address", "country", "preferred_lane", "preferred_load", "payment_preference"]
+    if user.role != Role.customer:
+        fields.append("notes")
+    for key in fields:
         setattr(c, key, getattr(body, key))
-    if body.history_note.strip():
+    if user.role != Role.customer and body.history_note.strip():
         db.add(CustomerNote(customer_id=c.id, author=user.name, body=body.history_note.strip()))
     db.commit()
     return {"ok": True}
+
+
+@app.get("/api/queue")
+def ops_queue(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role == Role.customer:
+        raise HTTPException(403, "Ops only")
+    staff = db.query(User).filter(User.role != Role.customer).all()
+    accounts = db.query(SignupRequest).filter(SignupRequest.status == "pending").all()
+    rfqs = db.query(RFQ).options(joinedload(RFQ.customer), joinedload(RFQ.documents), joinedload(RFQ.quotes)).all()
+    items = []
+    for row in accounts:
+        items.append({"kind": "account", "id": row.id, "title": row.name, "detail": f"{row.login_name} · {row.email}", "action": "Approve account"})
+    for rfq in rfqs:
+        if rfq.status in (RFQStatus.submitted, RFQStatus.in_review):
+            items.append({"kind": "rfq", "id": rfq.id, "title": rfq.reference, "detail": f"{rfq.customer.company} · {rfq.origin} → {rfq.destination}", "action": "Quote needed", "assigned_to_id": rfq.assigned_to_id})
+        for quote in rfq.quotes:
+            if quote.status == QuoteStatus.sent:
+                items.append({"kind": "quote", "id": rfq.id, "title": quote.reference, "detail": f"{rfq.reference} waiting for customer", "action": "Quote pending"})
+        for doc in rfq.documents:
+            if doc.status == DocStatus.required:
+                items.append({"kind": "document", "id": rfq.id, "title": doc.name, "detail": f"Missing on {rfq.reference}", "action": "Ask customer"})
+    return {"count": len(items), "items": items, "staff": [{"id": u.id, "name": u.name} for u in staff]}
+
+
+@app.post("/api/rfqs/{rfq_id}/assign")
+def assign_rfq(rfq_id: int, user_id: int = Query(...), user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role == Role.customer:
+        raise HTTPException(403, "Ops only")
+    rfq = db.get(RFQ, rfq_id)
+    if not rfq:
+        raise HTTPException(404, "RFQ not found")
+    rfq.assigned_to_id = user_id
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/quotes/{quote_id}/download")
+def download_quote(quote_id: int, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    quote = db.get(Quote, quote_id)
+    if not quote:
+        raise HTTPException(404, "Quote not found")
+    rfq = db.query(RFQ).options(joinedload(RFQ.customer)).filter(RFQ.id == quote.rfq_id).first()
+    if user.role == Role.customer and user.customer_id != rfq.customer_id:
+        raise HTTPException(403, "Not your quote")
+    html = f"""<html><body><h1>Trackzy quote {quote.reference}</h1>
+    <p>{rfq.customer.company}<br>{quote.origin} to {quote.destination}</p>
+    <p><strong>{quote.currency} {quote.amount}</strong> · {quote.service_type} · {quote.payment_term.value}</p>
+    <p>Transit: {quote.transit}</p><p>Included: {quote.included}</p><p>Excluded: {quote.excluded}</p>
+    <p>Documents: {quote.documents_required}</p><p>{quote.instructions}</p></body></html>"""
+    return HTMLResponse(html, headers={"Content-Disposition": f"attachment; filename={quote.reference}.html"})
 
 
 @app.get("/api/rfqs")
