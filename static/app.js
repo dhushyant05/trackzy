@@ -544,7 +544,15 @@ function showRfq(id) {
   const askinv = document.getElementById("askinv");
   const askpack = document.getElementById("askpack");
   if (askinv) askinv.onclick = () => ask("invoice");
-  if (askpack) askpack.onclick = () => ask("packing_list");
+  box.querySelectorAll("[data-file]").forEach(b => b.onclick = async () => {
+    const res = await fetch(`/api/documents/${b.dataset.file}`, { headers: { Authorization: `Bearer ${state.token}` } });
+    if (!res.ok) return toast("File not available");
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `document-${b.dataset.file}`;
+    a.click();
+  });
   box.querySelectorAll("[data-doc-save]").forEach(b => b.onclick = async () => {
     const status = box.querySelector(`[data-doc="${b.dataset.docSave}"]`).value;
     await api(`/api/documents/${b.dataset.docSave}?status=${status}`, { method: "PATCH", body: {} });

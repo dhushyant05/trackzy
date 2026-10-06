@@ -544,6 +544,14 @@ def download_document(document_id: int, user: User = Depends(require_user), db: 
     doc = db.get(Document, document_id)
     if not doc or not doc.file_name or not (UPLOADS / doc.file_name).exists():
         raise HTTPException(404, "File not uploaded")
+    if user.role == Role.customer:
+        owner = None
+        if doc.rfq_id:
+            owner = db.get(RFQ, doc.rfq_id)
+        elif doc.shipment_id:
+            owner = db.get(Shipment, doc.shipment_id)
+        if not owner or owner.customer_id != user.customer_id:
+            raise HTTPException(403, "Not your document")
     return FileResponse(UPLOADS / doc.file_name, filename=doc.file_name)
 
 
