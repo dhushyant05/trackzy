@@ -161,6 +161,7 @@ function shell(body) {
     </aside>
     <main class="main">
       <div class="topbar"><div><strong>${state.user.name}</strong><div class="muted">${state.user.email}</div></div><button class="ghost" id="out">Sign out</button></div>
+      ${notices.filter(n => !n.read).map(n => `<p class="tag warn">${n.title}: ${n.body} <button class="ghost" data-read="${n.id}">Dismiss</button></p>`).join("")}
       ${body}
     </main>
   </div>`;
@@ -180,6 +181,8 @@ async function renderApp() {
   if (state.view === "direct") body = directForm();
   if (state.view === "customers") body = await customersPage();
   if (state.view === "signups") body = await signups();
+  if (state.view === "users") body = await usersPage();
+  const notices = state.user.role === "customer" ? await api("/api/notices") : [];
   document.getElementById("app").innerHTML = shell(body);
   document.getElementById("out").onclick = () => { localStorage.removeItem("trackzyToken"); location.reload(); };
   document.querySelectorAll("[data-view]").forEach(b => b.onclick = async () => { state.view = b.dataset.view; await renderApp(); });
@@ -220,8 +223,27 @@ async function profilePage() {
 
 async function tower() {
   const d = await api("/api/dashboard");
-  const cards = [["Active", d.active_shipments], ["RFQs", d.rfqs_pending], ["Quotes", d.quotes_pending], ["In transit", d.in_transit], ["Warehouse", d.warehouse], ["Customs", d.customs_pending], ["Delivered", d.delivered], ["Direct", d.direct_shipments]];
-  return `<h2>Operations overview</h2><div class="kpis">${cards.map(([k, v]) => `<article class="card kpi"><span class="muted">${k}</span><b>${v}</b></article>`).join("")}</div>`;
+  const cards = [["Active", d.active_shipments], ["RFQs", d.rfqs_pending], ["Quotes", d.quotes_pending], ["In transit", d.in_transit], ["Warehouse", d.warehouse], ["Customs", d.customs_pending], ["Documents", d.documents_pending], ["Delayed", d.delayed], ["Delivered", d.delivered], ["Direct", d.direct_shipments]];
+  return `<h2>Operations overview</h2>
+    <form id="search" class="row"><input name="q" placeholder="Search shipment or customer" /><button class="primary">Search</button></form>
+    <div class="kpis">${cards.map(([k, v]) => `<article class="card kpi"><span class="muted">${k}</span><b>${v}</b></article>`).join("")}</div>
+    <h3>Alerts</h3>${(d.alerts || []).map(a => `<p class="tag warn">${a}</p>`).join("") || `<p class="muted">No alerts.</p>`}
+    <h3>Workload</h3>${(d.workload || []).map(w => `<p>${w.name}: ${w.assigned} assigned RFQs</p>`).join("")}
+    <div id="found">${(d.search || []).map(s => `<p>${s.kind}: ${s.label}</p>`).join("")}</div>`;
+}
+
+async function usersPage() {
+  const rows = await api("/api/users");
+  const settings = await api("/api/settings");
+  return `<h2>Users</h2>
+    <form id="newuser" class="card" style="padding:16px;margin-bottom:12px">
+      <label>Name</label><input name="name" required /><label>Email</label><input name="email" required /><label>Login</label><input name="login_name" />
+      <label>Role</label><select name="role"><option>ops</option><option>support</option><option>manager_ops</option><option>admin</option><option>customer</option></select>
+      <p><button class="primary">Create user</button></p>
+    </form>
+    ${rows.map(u => `<p>${u.name} · ${u.email} · <select data-role="${u.id}">${["admin","manager_ops","ops","support","customer"].map(r => `<option ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}</select> <button class="ghost" data-role-save="${u.id}">Save role</button></p>`).join("")}
+    <h3>Support routing</h3>
+    <form id="mode"><select name="support_mode"><option ${settings.support_mode === "ops" ? "selected" : ""}>ops</option><option ${settings.support_mode === "support" ? "selected" : ""}>support</option><option ${settings.support_mode === "hybrid" ? "selected" : ""}>hybrid</option></select> <button class="primary">Save routing</button></form>`;
 }
 
 async function rfqs() {
@@ -363,7 +385,14 @@ function startChatPoll() {
 }
 
 function bind() {
-  document.querySelectorAll("[data-open]").forEach(b => b.onclick = async () => {
+  document.querySelectorAll("[data-read]").forEach(b => b.onclick = async () => { await api(`/api/notices/${b.dataset.read}/read`, { method: "POST", body: {} }); await renderApp(); });
+  const search = document.getElementById("search");
+  if (search) search.onsubmit = async (e) => { e.preventDefault(); const d = await api("/api/dashboard?q=" + encodeURIComponent(new FormData(search).get("q"))); document.getElementById("found").innerHTML = (d.search || []).map(s => `<p>${s.kind}: ${s.label}</p>`).join("") || "<p class='muted'>No match.</p>"; };
+  const newuser = document.getElementById("newuser");
+  if (newuser) newuser.onsubmit = async (e) => { e.preventDefault(); await api("/api/users", { method: "POST", body: Object.fromEntries(new FormData(newuser).entries()) }); toast("User created"); await renderApp(); };
+  document.querySelectorAll("[data-role-save]").forEach(b => b.onclick = async () => { await api(`/api/users/${b.dataset.roleSave}?role=${document.querySelector(`[data-role='${b.dataset.roleSave}']`).value}`, { method: "PATCH", body: {} }); toast("Role saved"); });
+  const mode = document.getElementById("mode");
+  if (mode) mode.onsubmit = async (e) => { e.preventDefault(); await api("/api/settings?support_mode=" + new FormData(mode).get("support_mode"), { method: "PATCH", body: {} }); toast("Routing saved"); };
     state.view = "rfqs";
     state.openRfq = b.dataset.open;
     await renderApp();
@@ -460,12 +489,13 @@ function showRfq(id) {
   const ops = state.user.role !== "customer";
   const q = r.quotes[r.quotes.length - 1];
   box.innerHTML = `<article class="card" style="padding:16px;margin-top:12px"><h3>${r.reference}</h3><p>${r.service_type} · ${r.notes || ""}</p>
-    ${r.documents.map(d => `<p><span class="tag ${d.status === "uploaded" ? "" : "warn"}">${d.name}: ${d.status}</span> ${d.file_name ? `<a href="/api/documents/${d.id}" target="_blank">Open</a>` : ""}</p>`).join("")}
+    ${r.documents.map(d => `<p><span class="tag ${d.status === "approved" || d.status === "uploaded" ? "" : "warn"}">${d.name}: ${d.status}</span> ${d.file_name ? `<button class="ghost" data-file="${d.id}">Open</button>` : ""} ${ops ? `<select data-doc="${d.id}">${["required","uploaded","under_review","approved","rejected","missing"].map(s => `<option ${s === d.status ? "selected" : ""}>${s}</option>`).join("")}</select><button class="ghost" data-doc-save="${d.id}">Save</button>` : ""}</p>`).join("")}
     <div class="row">
       <form id="upinv"><input type="file" name="file" required /><button class="primary">Add invoice</button></form>
       <form id="uppack"><input type="file" name="file" required /><button class="primary">Add packing list</button></form>
       ${ops ? `<button class="ghost" id="askinv">Ask for invoice</button><button class="ghost" id="askpack">Ask for packing list</button>` : ""}
     </div>
+    ${r.suppliers.map(s => `<h4>${s.name}</h4>${s.products.map(p => `<p>${p.name} · ${p.quantity} ${p.unit} · ${p.weight_kg} kg · ${p.cbm} CBM ${(p.photos || []).map(photo => `<button class="ghost" data-photo="${photo.id}">Photo</button>`).join("")} <form data-photo-form="${p.id}" class="row"><input type="file" name="file" accept="image/*" required /><button class="ghost">Add photo</button></form></p>`).join("")}`).join("")}
     ${r.quotes.map(item => `<p><strong>${item.reference}</strong> ${money(item.amount, item.currency)} · ${item.status}<br>${item.included || ""} ${item.transit ? "· " + item.transit : ""} <button class="ghost" data-download="${item.id}">Download quote</button></p>${item.status === "sent" && state.user.role === "customer" ? `<button class="primary" data-accept="${item.id}">Accept quote</button>` : ""}`).join("")}
     ${ops && r.status !== "accepted" ? `<form id="qf">
       <label>Amount</label><input name="amount" value="${q ? q.amount : 1500}" />
@@ -514,6 +544,24 @@ function showRfq(id) {
   const askpack = document.getElementById("askpack");
   if (askinv) askinv.onclick = () => ask("invoice");
   if (askpack) askpack.onclick = () => ask("packing_list");
+  box.querySelectorAll("[data-doc-save]").forEach(b => b.onclick = async () => {
+    const status = box.querySelector(`[data-doc="${b.dataset.docSave}"]`).value;
+    await api(`/api/documents/${b.dataset.docSave}?status=${status}`, { method: "PATCH", body: {} });
+    toast("Document updated");
+    await renderApp();
+  });
+  box.querySelectorAll("[data-photo-form]").forEach(form => form.onsubmit = async (e) => {
+    e.preventDefault();
+    const res = await fetch(`/api/products/${form.dataset.photoForm}/photos`, { method: "POST", headers: { Authorization: `Bearer ${state.token}` }, body: new FormData(form) });
+    if (!res.ok) return toast("Photo upload failed");
+    toast("Photo saved");
+    await renderApp();
+  });
+  box.querySelectorAll("[data-photo]").forEach(b => b.onclick = async () => {
+    const res = await fetch(`/api/photos/${b.dataset.photo}`, { headers: { Authorization: `Bearer ${state.token}` } });
+    if (!res.ok) return toast("Photo not found");
+    window.open(URL.createObjectURL(await res.blob()), "_blank");
+  });
 }
 
 function newRfq() {

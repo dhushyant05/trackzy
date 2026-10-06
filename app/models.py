@@ -193,6 +193,18 @@ class RFQProduct(Base):
     photo_note: Mapped[str] = mapped_column(String(200), default="")
 
     supplier: Mapped[RFQSupplier] = relationship(back_populates="products")
+    photos: Mapped[list["ProductPhoto"]] = relationship(back_populates="product", cascade="all, delete-orphan")
+
+
+class ProductPhoto(Base):
+    __tablename__ = "product_photos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("rfq_products.id"))
+    file_name: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    product: Mapped[RFQProduct] = relationship(back_populates="photos")
 
 
 class Quote(Base):
@@ -305,7 +317,19 @@ class Document(Base):
     rfq: Mapped[RFQ | None] = relationship(back_populates="documents")
 
 
-class Message(Base):
+class Setting(Base):
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[str] = mapped_column(String(180), default="")
+    __tablename__ = "notices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
+    title: Mapped[str] = mapped_column(String(180))
+    body: Mapped[str] = mapped_column(Text, default="")
+    read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

@@ -18,7 +18,9 @@ from .models import (
     DocStatus,
     LoadType,
     Message,
+    Notice,
     PaymentTerm,
+    ProductPhoto,
     Quote,
     QuoteStatus,
     RFQ,
@@ -30,6 +32,7 @@ from .models import (
     ShipmentProduct,
     ShipmentSupplier,
     SignupRequest,
+    Setting,
     StatusEvent,
     User,
 )
@@ -218,6 +221,7 @@ def product_dict(p) -> dict:
         "quantity": p.quantity, "unit": p.unit, "unit_price": p.unit_price,
         "weight_kg": p.weight_kg, "cbm": p.cbm,
         "line_value": round((p.quantity or 0) * (p.unit_price or 0), 2),
+        "photos": [{"id": photo.id, "file_name": photo.file_name} for photo in getattr(p, "photos", [])],
     }
 
 
@@ -263,7 +267,7 @@ def shipment_dict(s: Shipment, private: bool) -> dict:
             "customer": s.customer.company, "customer_id": s.customer_id,
             "amount": s.amount, "currency": s.currency, "payment_term": s.payment_term.value, "paid": s.paid,
             "suppliers": [supplier_dict(x) for x in s.suppliers], "totals": totals(s.suppliers),
-            "documents": [{"id": d.id, "name": d.name, "kind": d.kind, "status": d.status.value, "note": d.note} for d in s.documents],
+            "documents": [{"id": d.id, "name": d.name, "kind": d.kind, "status": d.status.value, "note": d.note, "file_name": d.file_name} for d in s.documents],
         })
     return data
 
@@ -543,6 +547,58 @@ def download_document(document_id: int, user: User = Depends(require_user), db: 
     return FileResponse(UPLOADS / doc.file_name, filename=doc.file_name)
 
 
+@app.post("/api/products/{product_id}/photos")
+async def upload_product_photo(product_id: int, file: UploadFile = File(...), user: User = Depends(require_user), db: Session = Depends(get_db)):
+    product = db.get(RFQProduct, product_id)
+    if not product:
+        raise HTTPException(404, "Product not found")
+    stored = f"product-{product_id}-{file.filename}".replace(" ", "_")
+    (UPLOADS / stored).write_bytes(await file.read())
+    photo = ProductPhoto(product_id=product.id, file_name=stored)
+    db.add(photo)
+    db.commit()
+    return {"id": photo.id}
+
+
+@app.get("/api/photos/{photo_id}")
+def download_photo(photo_id: int, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    photo = db.get(ProductPhoto, photo_id)
+    if not photo or not (UPLOADS / photo.file_name).exists():
+        raise HTTPException(404, "Photo not found")
+    return FileResponse(UPLOADS / photo.file_name)
+
+
+@app.patch("/api/documents/{document_id}")
+def update_document(document_id: int, status: str = Query(...), user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role == Role.customer:
+        raise HTTPException(403, "Ops only")
+    doc = db.get(Document, document_id)
+    if not doc or status not in {item.value for item in DocStatus}:
+        raise HTTPException(404, "Document not found")
+    doc.status = DocStatus(status)
+    doc.note = f"Marked {status} by {user.name}"
+    db.commit()
+    return {"id": doc.id, "status": doc.status.value}
+
+
+@app.get("/api/notices")
+def notices(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role != Role.customer or not user.customer_id:
+        return []
+    rows = db.query(Notice).filter(Notice.customer_id == user.customer_id).order_by(Notice.id.desc()).all()
+    return [{"id": n.id, "title": n.title, "body": n.body, "read": n.read} for n in rows]
+
+
+@app.post("/api/notices/{notice_id}/read")
+def read_notice(notice_id: int, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    notice = db.get(Notice, notice_id)
+    if not notice or notice.customer_id != user.customer_id:
+        raise HTTPException(404, "Notice not found")
+    notice.read = True
+    db.commit()
+    return {"ok": True}
+
+
 @app.post("/api/rfqs/{rfq_id}/quote")
 def quote_rfq(rfq_id: int, body: QuoteIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
     if user.role == Role.customer:
@@ -634,6 +690,7 @@ def direct_shipment(body: DirectShipmentIn, user: User = Depends(require_user), 
         for p in s.products:
             db.add(ShipmentProduct(supplier_id=ss.id, name=p.name, description=p.description, hs_code=p.hs_code, quantity=p.quantity, unit=p.unit, unit_price=p.unit_price, weight_kg=p.weight_kg, cbm=p.cbm))
     db.add(StatusEvent(shipment_id=ship.id, status=STATUSES[0], note="Direct shipment opened by ops", actor=user.name))
+    db.add(Notice(customer_id=customer.id, title=f"Shipment {ship.reference} opened", body=f"Ops opened a shipment from {ship.origin} to {ship.destination}. Tracking /?track={ship.public_token}"))
     db.commit()
     return {"reference": ship.reference, "public_token": ship.public_token, "customer_id": customer.id}
 
@@ -677,11 +734,24 @@ def public_track(token: str, db: Session = Depends(get_db)):
 
 
 @app.get("/api/dashboard")
-def dashboard(user: User = Depends(require_user), db: Session = Depends(get_db)):
+def dashboard(q: str = "", user: User = Depends(require_user), db: Session = Depends(get_db)):
     if user.role not in (Role.admin, Role.manager_ops):
         raise HTTPException(403, "Master dashboard is for admin and manager ops")
-    shipments = db.query(Shipment).all()
-    rfqs = db.query(RFQ).all()
+    shipments = db.query(Shipment).options(joinedload(Shipment.customer)).all()
+    rfqs = db.query(RFQ).options(joinedload(RFQ.customer)).all()
+    docs = db.query(Document).all()
+    staff = db.query(User).filter(User.role != Role.customer).all()
+    now = datetime.utcnow()
+    delayed = [s for s in shipments if s.status != "Delivered" and s.created_at and (now - s.created_at).days >= 14]
+    stale_rfq = [r for r in rfqs if r.status in (RFQStatus.submitted, RFQStatus.in_review) and r.created_at and (now - r.created_at).days >= 2]
+    alerts = [f"{s.reference} is still {s.status} after 14 days" for s in delayed]
+    alerts += [f"{r.reference} has had no quote for 2 days" for r in stale_rfq]
+    alerts += [f"{d.name} is {d.status.value}" for d in docs if d.status in (DocStatus.missing, DocStatus.rejected)]
+    needle = q.strip().lower()
+    matches = []
+    if needle:
+        matches = [{"kind": "shipment", "label": f"{s.reference} · {s.customer.company}"} for s in shipments if needle in s.reference.lower() or needle in s.customer.company.lower()]
+        matches += [{"kind": "rfq", "label": f"{r.reference} · {r.customer.company}"} for r in rfqs if needle in r.reference.lower() or needle in r.customer.company.lower()]
     return {
         "active_shipments": sum(1 for s in shipments if s.status != "Delivered"),
         "rfqs_pending": sum(1 for r in rfqs if r.status in (RFQStatus.submitted, RFQStatus.in_review)),
@@ -691,7 +761,72 @@ def dashboard(user: User = Depends(require_user), db: Session = Depends(get_db))
         "warehouse": sum(1 for s in shipments if "Warehouse" in s.status or "Inspection" in s.status),
         "customs_pending": sum(1 for s in shipments if s.status == "Pending Customs Clearance"),
         "delivered": sum(1 for s in shipments if s.status == "Delivered"),
+        "documents_pending": sum(1 for d in docs if d.status in (DocStatus.required, DocStatus.missing, DocStatus.rejected)),
+        "delayed": len(delayed),
+        "workload": [{"name": u.name, "assigned": sum(1 for r in rfqs if r.assigned_to_id == u.id)} for u in staff],
+        "alerts": alerts,
+        "search": matches,
     }
+
+
+@app.get("/api/users")
+def list_users(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role != Role.admin:
+        raise HTTPException(403, "Admin only")
+    return [{"id": u.id, "name": u.name, "email": u.email, "login_name": u.login_name, "role": u.role.value} for u in db.query(User).all()]
+
+
+class UserIn(BaseModel):
+    name: str
+    email: str
+    login_name: str = ""
+    password: str = "ops123"
+    role: str = "ops"
+
+
+@app.post("/api/users")
+def create_user(body: UserIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role != Role.admin:
+        raise HTTPException(403, "Admin only")
+    if body.role not in {item.value for item in Role}:
+        raise HTTPException(400, "Unknown role")
+    row = User(name=body.name, email=body.email.strip().lower(), login_name=body.login_name.strip().lower() or None, password_hash=hash_password(body.password), role=Role(body.role))
+    db.add(row)
+    db.commit()
+    return {"id": row.id}
+
+
+@app.patch("/api/users/{user_id}")
+def update_user(user_id: int, role: str = Query(...), user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role != Role.admin:
+        raise HTTPException(403, "Admin only")
+    row = db.get(User, user_id)
+    if not row or role not in {item.value for item in Role}:
+        raise HTTPException(404, "User not found")
+    row.role = Role(role)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/settings")
+def get_settings(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role != Role.admin:
+        raise HTTPException(403, "Admin only")
+    row = db.get(Setting, "support_mode")
+    return {"support_mode": row.value if row else "ops"}
+
+
+@app.patch("/api/settings")
+def save_settings(support_mode: str = Query("ops"), user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if user.role != Role.admin:
+        raise HTTPException(403, "Admin only")
+    if support_mode not in {"ops", "support", "hybrid"}:
+        raise HTTPException(400, "Unknown support mode")
+    row = db.get(Setting, "support_mode") or Setting(key="support_mode")
+    row.value = support_mode
+    db.merge(row)
+    db.commit()
+    return {"support_mode": support_mode}
 
 
 @app.get("/api/messages")
