@@ -39,7 +39,7 @@ Chatwoot is not part of this stack. If an older checkout still has a `chatwoot` 
 
 ## Chat
 
-Customer chat is the Tawk.to bubble on `trackzy.in`. Agents reply in the Tawk.to dashboard. The widget id is `1k46v5qfs`.
+Customer chat is the Tawk.to bubble on the public pages and for signed-in customers. Ops and admin reply at https://dashboard.tawk.to, not inside Trackzy.
 
 ## Demo logins
 

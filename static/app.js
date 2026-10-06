@@ -20,7 +20,14 @@ async function api(path, opts = {}) {
 function money(n, c = "USD") { return `${c} ${Number(n || 0).toLocaleString()}`; }
 function toast(msg) { alert(msg); }
 
+function hideTawk() {
+  window.Tawk_API = window.Tawk_API || {};
+  window.Tawk_API.onLoad = function () { window.Tawk_API.hideWidget(); };
+  if (window.Tawk_API.hideWidget) window.Tawk_API.hideWidget();
+}
+
 function loadTawk() {
+  if (state.user && state.user.role !== "customer") return hideTawk();
   if (window.__tawkLoaded) return;
   fetch("/api/chat/config").then(r => r.json()).then(cfg => {
     if (!cfg.enabled || !cfg.property_id || !cfg.widget_id) return;
