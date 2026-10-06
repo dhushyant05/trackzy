@@ -20,7 +20,7 @@ async function api(path, opts = {}) {
 function money(n, c = "USD") { return `${c} ${Number(n || 0).toLocaleString()}`; }
 function toast(msg) { alert(msg); }
 
-function loadChatwoot() {
+function loadTawk() {
   if (window.__tawkLoaded) return;
   fetch("/api/chat/config").then(r => r.json()).then(cfg => {
     if (!cfg.enabled || !cfg.property_id || !cfg.widget_id) return;
@@ -38,8 +38,8 @@ function loadChatwoot() {
 
 async function boot() {
   const params = new URLSearchParams(location.search);
-  if (params.get("track")) { state.track = params.get("track"); loadChatwoot(); return renderPublic(); }
-  loadChatwoot();
+  if (params.get("track")) { state.track = params.get("track"); loadTawk(); return renderPublic(); }
+  loadTawk();
   if (!state.token) return renderLogin();
   try {
     state.user = await api("/api/me");
@@ -171,7 +171,7 @@ async function renderApp() {
   document.querySelectorAll("[data-view]").forEach(b => b.onclick = async () => { state.view = b.dataset.view; await renderApp(); });
   bind();
   if (openId && state.view === "rfqs") showRfq(openId);
-  loadChatwoot();
+  loadTawk();
 }
 
 async function tower() {
